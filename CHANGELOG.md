@@ -9,6 +9,47 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes, round 6 (two external reviews of `9071e08`)
+Data protection
+- Task form: subtask text typed but not added with "+" is part of the form input: "Save" adds it as a
+  subtask and the conflict export ("Download unsaved" / "Copy") contains it (it counted as unsaved work,
+  but was dropped from both).
+- Startup restore: the project-request number is taken before the recent-projects list is read. (A folder
+  the user started to choose while that read was slow was dropped, and the last project opened instead.)
+- No new task while archive.md is not UTF-8: a UTF-16 file (Windows PowerShell 5.1 `Out-File` / `>`) hides
+  every `### TASK-<n>` line, so a new task got the id of an archived one. `tasks next-id` prints no id and
+  exits 1 then; `tasks check` offers no next id.
+- Dates that are not YYYY-MM-DD (`2026-1-5`, `20261231`) are kept by the task form unless the field is
+  changed (the date input showed them empty and "Save" erased them); the form says which dates it cannot
+  show, and loading reports them as a warning (`non-iso-date`, not read-only).
+- Backup with a configuration file that is not valid JSON: the folders given by `MTM_DATA_DIR` /
+  `MTM_APP_DIR` / `MTM_BACKUP_DIR` stay excluded (`loadConfig({ lenient: true })`), and folders holding
+  `kanban.md` / `archive.md` (other than the root and `examples/`) are left out as operations data.
+
+Markdown / form
+- Upstream's leading-`|` metadata form is read only in the metadata lines right under the task header and
+  never when the line ends with `|`; parsing and the loss check share one rule (`metaLineMask`).
+  ` | **Tags**: #経理` no longer opens the board read-only, and a description table row
+  `| **Due**: 2026-01-01 |` stays description text (it became the Due field, or opened a correct file
+  read-only). The form accepts such table rows.
+- A description / notes ending with `---` is saved with the separator dropped, as reading does (the save
+  was refused as "would not read back").
+
+Ops
+- ZIP metadata (`metadataErrors` in manifest.json / README-RESTORE.md) records a fixed description and the
+  position only, never the `JSON.parse` message, which quotes the file (the content of a configuration
+  file left out with `--no-local-config` reached the ZIP that way).
+- `--check-build` output also hides the folders in their `file://` URL form (percent-encoded spaces and
+  non-ASCII names) and shortens any other absolute file URL.
+- `restore:verify --reuse-node-modules` removes its link on every exit: also after an unexpected error and on
+  Ctrl+C / SIGTERM; a build that writes no output is reported as a failure.
+
+Tests and docs
+- Regression tests for every item (unit 6, scripts 6, browser 6, one more key in the translation coverage
+  test); all fail on `9071e08` except the guard test "YYYY-MM-DD dates give no warning". 155 tests.
+- SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING, AGENTS.md, AI_WORKFLOW.md and the Claude skill
+  updated (next-id on non-UTF-8 files, dates, leading `|`, backup with a broken configuration).
+
 ### Review fixes, round 5 (two external reviews of `ce7130e`)
 Data protection
 - Archive / restore / delete-from-archive re-check, when the queued job STARTS, that archive.md is not

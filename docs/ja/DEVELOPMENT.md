@@ -84,8 +84,14 @@ npm run check       # build → test
   読み取り専用（`session.blocked`）・競合中のファイルへの書き込みを拒否します。待ち行列に入れた処理は、実行を始める
   時点で前提（読み取り専用でない・競合がない）をもう一度確認してください（10-archive.js の `refusedAtStart()`）。
 - ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外を検出）。
-- プロジェクトを開く処理を追加する場合は、`newProjectRequest()`（03-storage.js）で要求番号を取り、`await` のたびに
-  古い要求でないか確認してください。
+- プロジェクトを開く処理を追加する場合は、`newProjectRequest()`（03-storage.js）で要求番号を**最初の `await` より前に**取り、
+  `await` のたびに古い要求でないか確認してください（後から番号を取ると、その間に始まった利用者の操作を追い越します）。
+- タスクのメタデータ行かどうかは `metaLineMask()`（04-format.js）で判定してください。解析（`parseTask`）と欠落検査
+  （`blockTokens`）が同じ規則を使わないと、正常なファイルが読み取り専用になったり、説明の行が項目になったりします。
+- 新しいタスクの ID を決める前に `canCreateNewTask()` を呼んでください（`archive.md` が読めない・UTF-8 でない間は作らない）。
+- `scripts/` で、設定が壊れていても処理を続けるものは `loadConfig({ lenient: true })` を使い、`cfg.errors` を確認してください
+  （環境変数で指定したフォルダーは有効なまま）。ZIP や記録ファイルに残す文言には、例外のメッセージをそのまま入れないこと
+  （`JSON.parse` のメッセージは入力の一部を含みます。位置は `jsonErrorWhere()`）。
 - 未保存の判定は `hasUnsavedWork()`（ボードの未保存 + フォームの入力）を使ってください。
 - タスクのフォームから書く値は、保存前に `taskWriteProblems()`（04-format.js）で読み戻しを確認しています。
 - データを変更する操作の先頭で `guardWritable()` を呼び、読み取り専用・競合中の編集を防いでください。

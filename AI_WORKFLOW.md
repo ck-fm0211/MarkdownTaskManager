@@ -196,7 +196,8 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
   outside any task, non-checkbox lines inside `**Subtasks**:`, unknown lines in the configuration
   part…), the app opens it **read-only**. Run `npm run tasks -- check` after editing.
 - Task ids are unique across `kanban.md` **and** `archive.md`. Get a new one with
-  `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids.
+  `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids. While a file is
+  not UTF-8, `next-id` prints no id and exits with code 1 (its ids cannot be read): save it as UTF-8 first.
   Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
 - Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
   `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is
@@ -217,8 +218,11 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
   `Set-Content`, `Add-Content`, `Out-File` or `>` / `>>` (they write Shift_JIS / UTF-16 by default). Use
   your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default). `npm run tasks -- check` reports a
   file that is not UTF-8.
-- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` — another format makes the board
-  read-only until it is fixed).
+- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` — that makes the board read-only until it
+  is fixed; `2026-1-5` / `20261231` are kept but reported by `npm run tasks -- check` as `⚠ non-iso-date`,
+  and the browser's date fields cannot show them).
+- Upstream's leading-`|` metadata line (` | **Category**: …`) is only read directly under the task header,
+  together with the other metadata lines; in the description a `| **Due**: … |` table row is plain text.
 - An example of the format (a `**Due**:` line, a checklist, a `### …` heading) belongs in a closed
   ```` ``` ```` code block: lines in a code block are text, never task fields. A `### TASK-` line is a new
   task even inside a code block — never write one there.

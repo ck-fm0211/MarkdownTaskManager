@@ -84,7 +84,12 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
   `markdown-task-manager-src-<日時>[-ラベル][-dirty].zip`（`-dirty` は未コミットの変更あり）。
 - `package.json`・`FORK_INFO.json`・設定ファイルが編集途中で JSON として読めなくても作成できます（固定名
   `markdown-task-manager` で作り、読めなかったことを `README-RESTORE.md` と manifest の `metadataErrors` に記録します。
-  設定ファイルが読めない場合、`--out` がなければ開発フォルダー内の `backups/` に出力します）。
+  記録するのは「JSON として読めません（3 行目 15 列目）」のような決まった文言と位置だけで、ファイルの内容の一部を含む
+  エラーメッセージは ZIP に残しません。画面には詳しいメッセージを表示します）。
+  設定ファイルが読めない場合も、環境変数（`MTM_DATA_DIR` など）で指定したフォルダーは除外します。設定ファイルにしか
+  書かれていない運用データフォルダーはわからないため、`kanban.md` / `archive.md` を含むフォルダー（開発フォルダー直下と
+  `examples/` を除く）を運用データとみなして除外し、注意を表示します。`--out` も `backupDir`（環境変数）もなければ
+  開発フォルダー内の `backups/` に出力します。
   `package.json` が壊れていると **npm 自体が起動しない**ため、そのときは `node scripts/backup.mjs`（オプションは同じ）
   を直接実行します。`tools\windows\backup.cmd` は最初から Node を直接実行します。
 - 含めるもの: `src/`、`build.mjs`、`package.json`、`package-lock.json`、`task-manager.html`、ドキュメント、LICENSE、
@@ -113,7 +118,8 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
 - 古い世代は自動削除しません。D の容量を見て手動で整理してください。
 - ZIP 内の `_backup_info/README-RESTORE.md` に、作成日時・fork 元と基準コミット・Git の状態・作業途中の変更の有無・
   実行環境・ビルド確認状況・復元手順を記録します（`--check-build` で一時フォルダーへの試しビルドの結果も記録。
-  出力中の一時フォルダー・開発フォルダー・ホームフォルダーのパスは伏せて記録します）。
+  出力中の一時フォルダー・開発フォルダー・ホームフォルダーのパスは、`file:///…` の URL 形式（空白や日本語が `%20` などに
+  なったもの）も含めて伏せて記録します。それ以外の `file://` の絶対パスも、最後の部分だけにします）。
 
 ### 復元
 
@@ -127,7 +133,7 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
    `npm ci` には npm レジストリへの接続か、npm のキャッシュが必要です。どちらもない PC では
    `--reuse-node-modules` を付けると、開発フォルダーの `node_modules` をリンクして（`npm ci` なしで）展開・照合・ビルドを
    確認します（ロックファイルからインストールできることは確認しません。リンクは終了時に外し、元の `node_modules` は
-   変更しません）。`--skip-install` だけでは、展開先に `node_modules` がないためビルドできません。
+   変更しません。途中のエラーや Ctrl+C で終わった場合もリンクを外します）。`--skip-install` だけでは、展開先に `node_modules` がないためビルドできません。
 
 ## 4. 会社 PC へ持ち込むもの
 

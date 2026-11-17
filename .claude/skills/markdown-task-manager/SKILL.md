@@ -55,13 +55,14 @@ What was done.
 - Ask the user to stop editing in the browser before you edit; the app refuses to overwrite
   external changes (it shows a conflict) but simultaneous writes cannot be prevented.
 - New id: `npm run tasks -- next-id` (unique across kanban.md AND archive.md). Never reuse ids.
+  If it prints no id and exits 1, a file is not UTF-8: save it as UTF-8 and run it again.
 - After editing: `npm run tasks -- check` must print `[OK]` (otherwise the app opens the file read-only).
 - Archive = append to `archive.md` first, then remove from `kanban.md`; keep `**Status**:`.
 - Japanese text is fine everywhere except the Markdown keys (`**Status**`, `## Tasks`, …).
 - Save the files as **UTF-8 without BOM**. On Windows do NOT write them with PowerShell 5.1
   `Set-Content` / `Add-Content` / `Out-File` / `>` (they write Shift_JIS or UTF-16): the app then opens
   the file read-only. Use your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default).
-- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30`).
+- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` or `2026-1-5`).
 
 ## 🔄 Workflow
 
