@@ -44,10 +44,9 @@ if (cmd === 'where') {
   console.log(`archive.md: ${archiveText !== null ? 'あり' : 'なし'}`);
 } else if (cmd === 'next-id') {
   // Same rule as the browser: above the counter, every parsed id and every "### TASK-<n>" line
-  // (even unparsed ones) of BOTH files. Refused when archive.md cannot be read completely.
-  if (a && a.problems.length) {
-    console.error('archive.md に解析できない内容があるため、重複しない ID を決められません。先に `npm run tasks -- check` で確認・修正してください。');
-    process.exit(1);
+  // (even in blocks that could not be parsed) of BOTH files.
+  if ((k && k.problems.length) || (a && a.problems.length)) {
+    console.error('[注意] 解析できない内容があります（npm run tasks -- check）。ID はファイル内のすべての「### TASK-<番号>」行を考慮して決めています。');
   }
   const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
   const n = F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived);

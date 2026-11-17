@@ -162,15 +162,28 @@ describe('ids, input, rendering', () => {
     assert.deepEqual(hrefs, [['#', 'noopener noreferrer'], ['#', 'noopener noreferrer']]);
   });
 
-  it('legacy migration: "saving" until both backups and rewrites are done (stable)', async ({ page }) => {
+  it('legacy migration: never "nothing pending" while a backup is still being written (review B-10)', async ({ page }) => {
     const v1 = '# Board\n\n## ⚙️ Configuration\n\n**Columns**: 📝 To Do | ✅ Done\n\n## 📝 To Do\n\n### TASK-001 | a\n**Priority**: Low\n';
-    const v1a = '# Archive\n\n## ✅ Archives\n\n### TASK-009 | old\n**Priority**: Low\n';
-    for (let i = 0; i < 3; i++) {
-      await createDir(page, `p${i}`, { 'kanban.md': v1, 'archive.md': v1a });
-      await openFolder(page, `p${i}`);
-      assert.equal(await syncState(page), 'saved');
-      assert.deepEqual(await page.evaluate((d) => window.__mockFS.files(d), `p${i}`), ['archive.md', 'archive.v1-backup.md', 'kanban.md', 'kanban.v1-backup.md']);
-    }
+    await createDir(page, 'p', { 'kanban.md': v1 });
+    // The backup write is slow (OneDrive): before the fix it ran outside the write queue, so for
+    // its whole duration the page reported no pending write ("saved") and allowed closing the tab.
+    await setFault(page, 'p', 'kanban.v1-backup.md', { writeDelay: 150 });
+    await page.evaluate(() => {
+      window.__samples = [];
+      window.__sampler = setInterval(() => {
+        if (typeof session === 'undefined' || !session) return;
+        const disk = window.__mockFS.read('p', 'kanban.md') || '';
+        window.__samples.push({ pending: pendingWrites, migrated: disk.includes('<!-- Format: v2 -->') });
+      }, 5);
+    });
+    await openFolder(page, 'p');
+    // Stop sampling only once the migration really is on disk.
+    await page.waitForFunction(() => (window.__mockFS.read('p', 'kanban.md') || '').includes('<!-- Format: v2 -->'));
+    const samples = await page.evaluate(() => { clearInterval(window.__sampler); return window.__samples; });
+    assert.ok(samples.length > 10, `sampled ${samples.length}`);
+    const gaps = samples.filter((x) => !x.migrated && x.pending === 0);
+    assert.deepEqual(gaps, [], 'no moment without a pending write before the migration is on disk');
+    assert.equal(await syncState(page), 'saved');
   });
 
   it('an existing different v1-backup is not overwritten', async ({ page }) => {
@@ -185,21 +198,112 @@ describe('ids, input, rendering', () => {
   });
 });
 
+describe('review round 3', () => {
+  it('actions in the ARCHIVED task dialog never change the board task with the same id', async ({ page }) => {
+    const both = task(7, 'twin', SUB, 'done');
+    await createDir(page, 'p', { 'kanban.md': board(both, { lastId: 7 }), 'archive.md': archive(both) });
+    await openFolder(page, 'p');
+    const kb = await readFile(page, 'p', 'kanban.md');
+    await page.click('#archiveBtn');
+    await page.waitForSelector('.archive-card');
+    await page.click('.archive-card strong');
+    await page.waitForSelector('#taskModal.active');
+    assert.equal(await page.$$eval('#subtasksList button', (b) => b.length), 0, 'no subtask delete button');
+    assert.equal(await page.$$eval('#subtasksList [ondblclick]', (b) => b.length), 0, 'no double-click edit');
+    // Even if called directly, nothing on the board changes.
+    await page.evaluate(() => { deleteSubtask('TASK-007', 0); editSubtask('TASK-007', 0); toggleSubtask('TASK-007', 0); });
+    await waitIdle(page);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), kb);
+    assert.equal(await page.evaluate(() => tasks[0].subtasks.length), 1);
+  });
+
+  it('a readable archive.md with format problems does not block new tasks; ids still skip it', async ({ page }) => {
+    const ar = archive(task(30, 'a', '', 'done')) + '\n## 2025年\n\n' + task(55, 'b', '', 'done');
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'x'), { lastId: 1 }), 'archive.md': ar });
+    await openFolder(page, 'p');
+    assert.equal(await page.evaluate(() => !!session.blocked.archive), true, 'archive is read-only');
+    await page.click('#newTaskBtn');
+    await page.fill('#taskTitle', 'new');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-056 \| new/);
+    assert.equal(await readFile(page, 'p', 'archive.md'), ar);
+  });
+
+  it('links with a backslash or whitespace cannot turn into //host', async ({ page }) => {
+    const desc = '[a](/\\evil.example/share/x) [b](/\t/evil.example/x) [ok](/local/page)';
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'x', desc), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('[data-task-id="TASK-001"] .task-title');
+    const hrefs = await page.$$eval('#modalBody a', (as) => as.map((a) => a.getAttribute('href')));
+    assert.deepEqual(hrefs, ['#', '#', '/local/page']);
+  });
+
+  it('saving through the form keeps indentation and trailing double spaces of the description', async ({ page }) => {
+    const desc = '    indented code\n行末  \n最後';
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'x', desc), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#taskTitle', 'renamed');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /\n {4}indented code\n行末 {2}\n最後\n/);
+  });
+});
+
 describe('recent projects (real IndexedDB)', () => {
   it('the list is updated on every save, rename and second project (review A-4)', async ({ page }) => {
-    const list = await page.evaluate(async () => {
-      // Real functions, real IndexedDB. Cloneable stand-ins for directory handles; the folder
-      // comparison is made slow like the real isSameEntry(), which used to run inside the
-      // IndexedDB transaction and make it inactive (TransactionInactiveError).
-      window.loadRecentProjects = window.__realStorage.loadRecentProjects;
-      class FakeHandle { constructor(n) { this.name = n; this.kind = 'directory'; } }
-      const realFind = findProjectIndex;
-      window.findProjectIndex = async (...a) => { await new Promise((r) => setTimeout(r, 10)); return realFind(...a); };
+    const res = await page.evaluate(async () => {
+      // Real functions + real IndexedDB. Directory handles cannot be read back from IndexedDB in
+      // the test browser's profile, so cloneable stand-ins are used; their isSameEntry() is
+      // ASYNCHRONOUS and slow like the real one (identity by a hidden folder id, so two folders
+      // with the same name stay two projects). Before the fix, awaiting it inside the IndexedDB
+      // transaction made the transaction inactive (TransactionInactiveError) and nothing was saved.
+      class FakeHandle { constructor(name, id) { this.name = name; this.kind = 'directory'; this.folderId = id; } }
+      FakeHandle.prototype.isSameEntry = async function (o) {
+        await new Promise((r) => setTimeout(r, 15));
+        return !!o && o.folderId === this.folderId;
+      };
+      const realLoad = window.__realStorage.loadRecentProjects;
+      // IndexedDB returns plain objects: give the stored handles their methods back, as real
+      // FileSystemDirectoryHandle objects would have.
+      window.loadRecentProjects = async () => (await realLoad()).map((p) => ({ ...p, handle: Object.setPrototypeOf(p.handle, FakeHandle.prototype) }));
       const save = window.__realStorage.saveDirectoryHandle;
-      const results = [await save(new FakeHandle('A'), 'A'), await save(new FakeHandle('B'), 'B'), await save(new FakeHandle('A'), 'A renamed')];
-      return { results, names: (await loadRecentProjects()).map((p) => p.customName) };
+      const errors = [];
+      const origError = console.error;
+      console.error = (...a) => { errors.push(String(a[1] && a[1].name ? a[1].name : a[0])); origError(...a); };
+      const results = [
+        await save(new FakeHandle('data', 1), 'A'),
+        await save(new FakeHandle('data', 2), 'B (same folder name)'),
+        await save(new FakeHandle('data', 1), 'A renamed'),
+      ];
+      console.error = origError;
+      return { names: (await loadRecentProjects()).map((p) => p.customName), results, errors };
     });
-    assert.deepEqual(list.results, [true, true, true]);
-    assert.deepEqual(list.names, ['A renamed', 'B']);
+    assert.deepEqual(res.errors, []);
+    assert.deepEqual(res.names, ['A renamed', 'B (same folder name)']);
+    assert.deepEqual(res.results, [true, true, true]);
+  });
+
+  it('no foreign await inside the IndexedDB transaction (TransactionInactiveError)', async ({ page }) => {
+    const res = await page.evaluate(async () => {
+      // The folder comparison takes time (real isSameEntry() is an async browser call). If it is
+      // awaited while the write transaction is open, the transaction auto-commits and put() fails.
+      window.loadRecentProjects = window.__realStorage.loadRecentProjects;
+      const realFind = findProjectIndex;
+      window.findProjectIndex = async (...a) => { await new Promise((r) => setTimeout(r, 15)); return realFind(...a); };
+      class FakeHandle { constructor(n) { this.name = n; this.kind = 'directory'; } }
+      const errors = [];
+      const origError = console.error;
+      console.error = (...a) => { errors.push(String(a[1] && a[1].name ? a[1].name : a[0])); origError(...a); };
+      const save = window.__realStorage.saveDirectoryHandle;
+      await save(new FakeHandle('A'), 'A');
+      await save(new FakeHandle('B'), 'B');
+      await save(new FakeHandle('A'), 'A renamed');
+      console.error = origError;
+      return { errors, names: (await loadRecentProjects()).map((p) => p.customName) };
+    });
+    assert.deepEqual(res.errors, []);
+    assert.deepEqual(res.names, ['A renamed', 'B']);
   });
 });

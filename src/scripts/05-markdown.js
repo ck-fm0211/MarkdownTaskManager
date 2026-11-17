@@ -51,7 +51,10 @@
                 const u = url.trim();
                 // http(s), mailto, in-page anchors and site-relative paths only. "//host/..." is
                 // refused: from a file:// page it would become a network (UNC) path.
-                const safe = /^(https?:|mailto:|#|\/(?!\/))/i.test(u) ? u : '#';
+                // Browsers treat "\" like "/" and drop tabs/newlines inside URLs, so "/\host" or
+                // "/<TAB>/host" would become "//host": any whitespace, control character or
+                // backslash makes the link unsafe.
+                const safe = !/[\u0000-\u0020\u007f\\]/.test(u) && /^(https?:|mailto:|#|\/(?!\/))/i.test(u) ? u : '#';
                 return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline;">${text}</a>`;
             });
 

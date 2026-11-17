@@ -24,7 +24,7 @@ test('every t("key") used in the sources exists in English', () => {
   // Keys built dynamically: integrity.<code>, sync.conflict.<kind>, sync.error.<kind>
   const dynamic = [
     'integrity.lossy-task', 'integrity.malformed-task-header', 'integrity.unknown-header-content', 'integrity.text-outside-task',
-    'integrity.task-not-in-column', 'integrity.unknown-section', 'integrity.read-failed', 'integrity.duplicate-id', 'integrity.unknown-status', 'integrity.heading-in-tasks', 'integrity.unstable-task',
+    'integrity.task-not-in-column', 'integrity.unknown-section', 'integrity.read-failed', 'integrity.duplicate-id', 'integrity.unknown-status', 'integrity.heading-in-tasks', 'integrity.unstable-task', 'integrity.unstable-header', 'integrity.subtasks-in-notes',
     'sync.conflict.conflict', 'sync.conflict.missing', 'sync.conflict.appeared', 'sync.conflict.uncertain',
     'sync.error.read-failed', 'sync.error.write-failed', 'sync.error.verify-failed', 'sync.error.blocked',
   ];

@@ -131,8 +131,10 @@
                                 return `
                                 <li style="padding: 0.5rem; margin-bottom: 0.25rem; background: var(--bg); border-radius: 4px; display: flex; align-items: center; gap: 0.5rem;">
                                     <input type="checkbox" ${st.completed ? 'checked' : ''} ${wasArchiveModalActive ? 'disabled' : ''} onchange="toggleSubtask('${task.id}', ${idx})" aria-label="${escapeHtml(st.text)}" style="width: 18px; height: 18px; cursor: pointer;">
-                                    <span ondblclick="editSubtask('${task.id}', ${idx})" style="flex: 1; ${st.completed ? 'text-decoration: line-through; color: var(--text-secondary);' : ''} cursor: pointer;" title="${t('tooltip.doubleClickEdit')}">${escapedText}</span>
-                                    <button onclick="deleteSubtask('${task.id}', ${idx})" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1.1rem; padding: 0.25rem;" title="${t('tooltip.delete')}" aria-label="${t('tooltip.delete')}">🗑️</button>
+                                    ${wasArchiveModalActive
+                                        ? `<span style="flex: 1; ${st.completed ? 'text-decoration: line-through; color: var(--text-secondary);' : ''}">${escapedText}</span>`
+                                        : `<span ondblclick="editSubtask('${task.id}', ${idx})" style="flex: 1; ${st.completed ? 'text-decoration: line-through; color: var(--text-secondary);' : ''} cursor: pointer;" title="${t('tooltip.doubleClickEdit')}">${escapedText}</span>
+                                    <button onclick="deleteSubtask('${task.id}', ${idx})" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1.1rem; padding: 0.25rem;" title="${t('tooltip.delete')}" aria-label="${t('tooltip.delete')}">🗑️</button>`}
                                 </li>
                                 `;
                             }).join('')}
@@ -177,9 +179,13 @@
 
         // The task shown in the detail dialog, by object identity (duplicate ids must not make an
         // action hit another task with the same id); falls back to the id.
+        // If the dialog shows an ARCHIVED task (or a task that is no longer on the board), no
+        // board task is returned — an action there must never change another task with that id.
         function findActiveTask(taskId) {
-            if (currentDetailTask && currentDetailTask.id === taskId && tasks.includes(currentDetailTask)) return currentDetailTask;
-            return tasks.find(t => t.id === taskId);
+            if (currentDetailTask && currentDetailTask.id === taskId) {
+                return tasks.includes(currentDetailTask) ? currentDetailTask : null;
+            }
+            return tasks.find(t => t.id === taskId) || null;
         }
 
         // Lines that would be read back as something else (a new task, a heading of the task
@@ -201,7 +207,9 @@
         function canCreateNewTask() {
             const s = session;
             if (!s) return false;
-            if (s.files.archive.state === 'error' || s.blocked.archive) {
+            // Unreadable → its ids are unknown. A readable archive.md with parse problems is fine:
+            // every "### TASK-<n>" line of it is still counted (maxIdInText).
+            if (s.files.archive.state === 'error') {
                 showNotification(t('notif.archiveNeededForId'), 'error');
                 renderSyncBanner();
                 return false;
@@ -281,8 +289,16 @@
             const due = document.getElementById('taskDue').value;
             const completed = document.getElementById('taskCompleted').value;
             const tagsInput = document.getElementById('taskTags').value.trim();
-            const description = document.getElementById('taskDescription').value.trim();
-            const notes = document.getElementById('taskNotes').value.trim();
+            // Only outer blank lines are removed: indentation of the first line and trailing double
+            // spaces (Markdown line breaks) are content.
+            const trimBlankLines = (v) => {
+                const ls = String(v).replace(/\r\n?/g, '\n').split('\n');
+                while (ls.length && !ls[0].trim()) ls.shift();
+                while (ls.length && !ls[ls.length - 1].trim()) ls.pop();
+                return ls.join('\n');
+            };
+            const description = trimBlankLines(document.getElementById('taskDescription').value);
+            const notes = trimBlankLines(document.getElementById('taskNotes').value);
 
             const badLine = findStructuralLine(description, notes, formSubtasks.map(st => st.text));
             if (badLine) {
