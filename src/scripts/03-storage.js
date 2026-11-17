@@ -164,19 +164,37 @@
             }
         }
 
+        // Every request to show another project (selector, folder picker, startup restore) gets a
+        // number. A request that is overtaken by a newer one while it waits (permission prompt,
+        // folder picker, IndexedDB) is dropped: it must never open its folder later and replace a
+        // project that was opened — and maybe edited — in the meantime.
+        let projectRequestSeq = 0;
+        function newProjectRequest() {
+            const n = ++projectRequestSeq;
+            return () => n !== projectRequestSeq; // → true when overtaken
+        }
+
         // Switch to a different project. Unsaved edits → confirmation; running saves finish first
         // (against the OLD project's files); then a brand-new session is opened for the new folder.
+        // The confirmation is asked about the project that is open RIGHT BEFORE the switch (after
+        // the permission prompt), not about the one that was open when the request started.
         async function switchProject(projectIndex) {
+            const overtaken = newProjectRequest();
             try {
                 const projects = await loadRecentProjects();
+                if (overtaken()) return;
                 if (projectIndex < 0 || projectIndex >= projects.length) return;
                 const project = projects[projectIndex];
-                if (!(await confirmLeaveCurrent())) { await updateProjectSelector(); return; }
-                if (!(await verifyPermission(project.handle))) {
+                const permitted = await verifyPermission(project.handle);
+                if (overtaken()) return;
+                if (!permitted) {
                     showNotification(t('notif.permissionDenied'), 'error');
                     await updateProjectSelector();
                     return;
                 }
+                const leave = await confirmLeaveCurrent();
+                if (overtaken()) return;
+                if (!leave) { await updateProjectSelector(); return; }
                 const ok = await openProject(project.handle, { skipLeaveCheck: true });
                 if (ok) {
                     if (!(await saveDirectoryHandle(project.handle))) console.warn('recent-projects list not updated');
@@ -265,7 +283,11 @@
                 try {
                     // Verify we still have permission
                     console.log('Verifying permissions...');
-                    if (await verifyPermission(savedHandle)) {
+                    const overtaken = newProjectRequest();
+                    const permitted = await verifyPermission(savedHandle);
+                    // A folder chosen by the user while the startup permission check was pending wins.
+                    if (overtaken() || session) { await updateProjectSelector(); return !!session; }
+                    if (permitted) {
                         // Always a fresh read from disk: edits an AI made while the browser was
                         // closed are simply what gets loaded.
                         const ok = await openProject(savedHandle, { skipLeaveCheck: true });
@@ -308,8 +330,11 @@
                     options.startIn = directoryHandle;
                 }
 
+                const overtaken = newProjectRequest();
                 const picked = await window.showDirectoryPicker({ ...options, mode: 'readwrite' });
-                if (!(await confirmLeaveCurrent())) return;
+                if (overtaken()) return;
+                const leave = await confirmLeaveCurrent();
+                if (overtaken() || !leave) return;
                 const ok = await openProject(picked, { skipLeaveCheck: true });
                 if (ok && !(await saveDirectoryHandle(picked))) showNotification(t('notif.historyError'), 'error'); // Save for next time
 

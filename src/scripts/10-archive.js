@@ -27,6 +27,17 @@
             return null;
         }
 
+        // Checked again when the queued job STARTS: a job queued behind a reload of archive.md
+        // (opening the archive list re-reads it) must not write a file that this reload found to be
+        // read-only, or run into a conflict found meanwhile. → true when the job must stop.
+        function refusedAtStart(s) {
+            const reason = archiveUnavailableReason(s);
+            if (!reason) return false;
+            showNotification(reason, 'error');
+            renderSyncBanner();
+            return true;
+        }
+
         // Archive one task (the exact object `task` of tasks[]).
         // → { ok, partial?, skippedDestination?, reason? }
         async function archiveTask(task) {
@@ -37,6 +48,7 @@
                 if (reason) { showNotification(reason, 'error'); renderSyncBanner(); return { ok: false, reason }; }
                 return enqueueWrite(async () => {
                     if (s !== session || !tasks.includes(task)) return { ok: false, reason: 'stale' };
+                    if (refusedAtStart(s)) return { ok: false, reason: 'unavailable' };
                     // Snapshot: exactly this content is archived. Edits are blocked while the
                     // operation runs (guardWritable); the snapshot is re-checked before the task
                     // is removed from the board, as a second line of defence.
@@ -113,6 +125,7 @@
                 if (reason) { showNotification(reason, 'error'); renderSyncBanner(); return { ok: false, reason }; }
                 return enqueueWrite(async () => {
                     if (s !== session || !archivedTasks.includes(task)) return { ok: false, reason: 'stale' };
+                    if (refusedAtStart(s)) return { ok: false, reason: 'unavailable' };
                     try {
                         await assertUnchanged(s, 'kanban');
                         await assertUnchanged(s, 'archive');
@@ -217,6 +230,7 @@
                 if (reason) { showNotification(reason, 'error'); return { ok: false }; }
                 return enqueueWrite(async () => {
                     if (s !== session || !archivedTasks.includes(task)) return { ok: false, reason: 'stale' };
+                    if (refusedAtStart(s)) return { ok: false, reason: 'unavailable' };
                     const remaining = archivedTasks.filter(x => x !== task);
                     try {
                         await writeFileChecked(s, 'archive', archiveContentFor(remaining));

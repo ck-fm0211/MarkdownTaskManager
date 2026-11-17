@@ -34,7 +34,9 @@
         function newFileSlot(name) {
             // baseline: string = content we know is on disk; null = we know the file does not exist.
             // state: 'ok' | 'error' (could not be read → never written).
-            return { name, handle: null, baseline: null, state: 'ok', eol: '\n', error: null };
+            // notUtf8: the file is not valid UTF-8 (e.g. Shift_JIS written by PowerShell 5.1); the
+            // baseline is then its lossy decoding and the file is read-only (never written).
+            return { name, handle: null, baseline: null, state: 'ok', eol: '\n', error: null, notUtf8: false };
         }
 
         function newSession(dir) {
@@ -54,6 +56,11 @@
 
         function isDirty(s = session) {
             return !!s && s.editSeq !== s.savedSeq;
+        }
+
+        // Unsaved work of any kind: board changes not on disk yet, or a task form with typed changes.
+        function hasUnsavedWork(s = session) {
+            return isDirty(s) || (!!s && isFormDirty());
         }
 
         function fileLabel(which) {
@@ -80,15 +87,18 @@
             if (!s || s !== session || s.gen !== projectGen) throw new SyncError('stale', null, 'stale session');
         }
 
-        // Read a file of the session. → { exists: true, text, handle } | { exists: false }.
+        // Read a file of the session. → { exists: true, text, handle, notUtf8 } | { exists: false }.
         // Any error other than "not found" throws read-failed (never treated as "unchanged").
+        // The bytes are decoded strictly: a file that is not UTF-8 is reported (notUtf8), never
+        // silently turned into U+FFFD replacement characters.
         async function readDisk(s, which) {
             const slot = s.files[which];
             let handle = slot.handle;
             try {
                 if (!handle) handle = await s.dir.getFileHandle(slot.name);
                 const file = await handle.getFile();
-                return { exists: true, text: await file.text(), handle };
+                const d = decodeUtf8(await file.arrayBuffer());
+                return { exists: true, text: d.text, handle, notUtf8: !d.valid };
             } catch (e) {
                 if (e && e.name === 'NotFoundError') return { exists: false };
                 throw new SyncError('read-failed', which, e && e.message, { cause: e });
@@ -100,11 +110,11 @@
             const slot = s.files[which];
             if (slot.state === 'error') throw new SyncError('read-failed', which, 'file was not readable at load');
             if (slot.baseline === null) {
-                if (disk.exists && disk.text.trim() !== '') throw new SyncError('appeared', which);
+                if (disk.exists && (disk.notUtf8 || disk.text.trim() !== '')) throw new SyncError('appeared', which);
                 return;
             }
             if (!disk.exists) throw new SyncError('missing', which);
-            if (disk.text !== slot.baseline) throw new SyncError('conflict', which);
+            if (!!disk.notUtf8 !== !!slot.notUtf8 || disk.text !== slot.baseline) throw new SyncError('conflict', which);
         }
 
         async function assertUnchanged(s, which) {
@@ -116,8 +126,14 @@
         }
 
         // Check → write → read back. MUST be called from inside enqueueWrite().
+        // A read-only file (parse problems, not UTF-8) and an open conflict are refused HERE too, not
+        // only by the callers: a job that was queued before a reload made the file read-only must
+        // not write it when its turn comes.
         async function writeFileChecked(s, which, content) {
             const slot = s.files[which];
+            assertLive(s);
+            if (s.blocked[which]) throw new SyncError('blocked', which, 'file is read-only');
+            if (s.conflict) throw new SyncError(s.conflict.kind, s.conflict.which, 'conflict is open');
             const disk = await assertUnchanged(s, which);
             let handle = disk.handle || slot.handle;
             try {
@@ -146,10 +162,11 @@
             try { back = await readDisk(s, which); } catch (e) {
                 throw new SyncError('uncertain', which, 'read-back failed', { cause: e });
             }
-            if (!back.exists || back.text !== content) throw new SyncError('uncertain', which, 'read-back mismatch');
+            if (!back.exists || back.notUtf8 || back.text !== content) throw new SyncError('uncertain', which, 'read-back mismatch');
             slot.handle = handle;
             slot.baseline = content;
             slot.state = 'ok';
+            slot.notUtf8 = false;
             return true;
         }
 
@@ -251,8 +268,10 @@
             return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
         }
 
+        // The board as it is in this page, INCLUDING what is typed in an open task form (a form that
+        // could not be saved because of a conflict must be part of the export).
         function unsavedKanbanText() {
-            return generateKanbanContent(config, tasks, session ? session.files.kanban.eol : '\n');
+            return generateKanbanContent(config, boardWithOpenForm(), session ? session.files.kanban.eol : '\n');
         }
 
         function downloadUnsaved() {
@@ -306,7 +325,7 @@
             if (busyOperation) { showNotification(t('notif.busy'), 'error'); return false; }
             await waitForWrites();
             if (!session) return false;
-            if (!opts.force && isDirty()) {
+            if (!opts.force && hasUnsavedWork()) {
                 if (!confirm(t('confirm.reloadDiscard'))) return false;
             }
             const ok = await openProject(session.dir, { skipLeaveCheck: true, reload: true });
@@ -350,7 +369,9 @@
                         renderArchiveList(document.getElementById('archiveSearch').value);
                         document.getElementById('archiveModal').classList.add('active');
                     }
-                    showNotification(t('notif.reloadedExternal'), 'success');
+                    // A failed reload already reported its own error (load error, cancelled
+                    // initialisation): never cover it with a success message.
+                    if (ok) showNotification(t('notif.reloadedExternal'), 'success');
                     return;
                 }
                 const first = changed[0];
@@ -427,6 +448,7 @@
             if (!kind) {
                 banner.classList.remove('show');
                 banner.removeAttribute('data-kind');
+                updateBannerSpace();
                 return;
             }
             banner.dataset.kind = kind;
@@ -435,7 +457,17 @@
             detailEl.style.display = detail ? 'block' : 'none';
             Object.entries(btns).forEach(([k, b]) => { if (b) b.style.display = show.includes(k) ? 'inline-flex' : 'none'; });
             banner.classList.add('show');
+            updateBannerSpace();
         }
+
+        // While a dialog is open the banner is shown on top of it (CSS); the dialog leaves this much
+        // room at the top so that neither covers the other.
+        function updateBannerSpace() {
+            const banner = document.getElementById('syncBanner');
+            const h = banner && banner.classList.contains('show') ? Math.min(banner.offsetHeight, Math.round(window.innerHeight * 0.45)) : 0;
+            document.documentElement.style.setProperty('--sync-banner-space', `${h}px`);
+        }
+        window.addEventListener('resize', updateBannerSpace);
 
         async function retrySave() {
             if (!session) return;
@@ -452,7 +484,7 @@
             document.getElementById('syncReloadBtn').addEventListener('click', () => reloadFromDisk());
             document.getElementById('reloadBtn').addEventListener('click', async () => {
                 if (!session) return;
-                if (isDirty() || session.conflict) { await reloadFromDisk(); return; }
+                if (hasUnsavedWork() || session.conflict) { await reloadFromDisk(); return; }
                 await checkExternalChanges({ manual: true });
             });
             document.addEventListener('visibilitychange', () => { if (!document.hidden) checkExternalChanges(); });
@@ -462,7 +494,7 @@
 
         // Warn before closing the tab while something is not on disk yet.
         window.addEventListener('beforeunload', (e) => {
-            if (session && (isDirty() || pendingWrites > 0 || busyOperation)) {
+            if (session && (hasUnsavedWork() || pendingWrites > 0 || busyOperation)) {
                 e.preventDefault();
                 e.returnValue = '';
             }

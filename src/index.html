@@ -149,7 +149,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Nouvelle tâche</h2>
-                <button class="close-btn" onclick="closeTaskModal()">&times;</button>
+                <button class="close-btn" onclick="cancelTaskModal()">&times;</button>
             </div>
             <form id="newTaskForm" style="padding: 1.5rem; background: #f8f9fa;">
                 <input type="hidden" id="taskEditId">
@@ -223,7 +223,7 @@
                     <small style="color: var(--text-secondary); font-size: 0.85rem;">Markdown supporté : **gras**, *italique*, `code`, listes, liens, **Sous-sections**:</small>
                 </div>
                 <div class="actions">
-                    <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">Annuler</button>
+                    <button type="button" class="btn btn-secondary" onclick="cancelTaskModal()">Annuler</button>
                     <button type="submit" class="btn btn-primary" id="taskFormSubmitBtn">Créer</button>
                 </div>
             </form>

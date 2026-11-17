@@ -23,6 +23,7 @@
             isEditMode = false;
             editingTask = null;
             formSubtasks = [];
+            taskFormSnapshot = null;
         }
 
         // Ask before leaving a project that has unsaved edits; wait for in-flight writes first
@@ -30,28 +31,35 @@
         async function confirmLeaveCurrent() {
             if (busyOperation) { showNotification(t('notif.busy'), 'error'); return false; }
             await waitForWrites();
-            if (session && (isDirty() || session.conflict)) return confirm(t('confirm.leaveUnsaved'));
+            if (session && (hasUnsavedWork() || session.conflict)) return confirm(t('confirm.leaveUnsaved'));
             return true;
         }
 
-        // Read one file of the project for loading. → { exists, text, handle } or { error }.
+        // Read one file of the project for loading. → { exists, text, handle, notUtf8 } or { error }.
+        // Strict UTF-8 (see decodeUtf8): a Shift_JIS / UTF-16 file is opened read-only instead of
+        // being shown — and later saved — as replacement characters.
         async function readForLoad(dir, name) {
             try {
                 const handle = await dir.getFileHandle(name);
                 const file = await handle.getFile();
-                return { exists: true, text: await file.text(), handle };
+                const d = decodeUtf8(await file.arrayBuffer());
+                return { exists: true, text: d.text, handle, notUtf8: !d.valid };
             } catch (e) {
                 if (e && e.name === 'NotFoundError') return { exists: false };
                 return { error: e };
             }
         }
 
-        function applyArchiveText(s, text) {
+        const NOT_UTF8 = (name) => ({ code: 'not-utf8', lines: [name] });
+
+        function applyArchiveText(s, text, notUtf8 = false) {
             const r = parseArchiveContent(text);
             archivedTasks = r.tasks;
             loadedArchiveV2 = r.formatV2;
             s.archivePreamble = r.preamble;
-            s.blocked.archive = r.problems.length ? r.problems : null;
+            s.files.archive.notUtf8 = !!notUtf8;
+            const problems = (notUtf8 ? [NOT_UTF8('archive.md')] : []).concat(r.problems);
+            s.blocked.archive = problems.length ? problems : null;
             return r;
         }
 
@@ -109,7 +117,7 @@
                 s.files.archive.handle = archive.handle;
                 s.files.archive.baseline = archive.text;
                 s.files.archive.eol = detectEol(archive.text);
-                applyArchiveText(s, archive.text);
+                applyArchiveText(s, archive.text, archive.notUtf8);
             }
 
             if (kanban.exists) {
@@ -117,11 +125,13 @@
                 slot.handle = kanban.handle;
                 slot.baseline = kanban.text;
                 slot.eol = detectEol(kanban.text);
+                slot.notUtf8 = !!kanban.notUtf8;
                 const r = parseKanbanContent(kanban.text);
                 config = r.config;
                 tasks = r.tasks;
                 loadedFormatV2 = r.formatV2;
-                s.blocked.kanban = r.problems.length ? r.problems : null;
+                const problems = (kanban.notUtf8 ? [NOT_UTF8('kanban.md')] : []).concat(r.problems);
+                s.blocked.kanban = problems.length ? problems : null;
                 s.warnings = r.warnings;
                 console.log(`Loaded kanban.md: ${tasks.length} tasks, V2=${loadedFormatV2}, problems=${r.problems.length}`);
             } else {
@@ -226,13 +236,13 @@
                     if (slot.baseline !== null) { s.conflict = s.conflict || { which: 'archive', kind: 'missing' }; renderSyncBanner(); }
                     return;
                 }
-                if (slot.state === 'error' || disk.text !== slot.baseline) {
+                if (slot.state === 'error' || disk.text !== slot.baseline || !!disk.notUtf8 !== !!slot.notUtf8) {
                     slot.handle = disk.handle;
                     slot.baseline = disk.text;
                     slot.state = 'ok';
                     slot.error = null;
                     slot.eol = detectEol(disk.text);
-                    applyArchiveText(s, disk.text);
+                    applyArchiveText(s, disk.text, disk.notUtf8);
                     if (s.lastError && s.lastError.which === 'archive') s.lastError = null;
                     updateAutocomplete();
                     renderSyncBanner();

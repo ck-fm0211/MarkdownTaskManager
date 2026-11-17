@@ -200,7 +200,11 @@
             const outside = (text) => headingsOutsideFences(String(text || '').split('\n'));
             const fromNotes = String(notes || '').split('\n').find(l => head.test(l)) || outside(notes)[0];
             if (fromNotes) return fromNotes;
-            const fromDesc = String(description || '').split('\n').find(l => head.test(l) || META_LINE_RE.test(l) || SECTION_STOP_RE.test(l))
+            // Field / section lines are only structure OUTSIDE a closed code block (same rule as the
+            // parser); "### TASK-" is refused everywhere (it always starts a new task block).
+            const descLines = String(description || '').split('\n');
+            const descFenced = fencedLineMask(descLines);
+            const fromDesc = descLines.find((l, i) => head.test(l) || (!descFenced[i] && (META_LINE_RE.test(l) || SECTION_STOP_RE.test(l))))
                 || outside(description)[0];
             if (fromDesc) return fromDesc;
             // An unclosed ``` / ~~~ block would make the file ambiguous (read-only on the next load).
@@ -283,95 +287,67 @@
         // Handle task form submission (create or edit)
         document.getElementById('newTaskForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (!guardWritable()) return;
+            const s = session;
+            if (!s) return;
+            // During a CONFLICT the form is still accepted, but only into this page (nothing is
+            // written): the typed change becomes part of the unsaved board, so "Download unsaved" /
+            // "Copy" contain it and reload / switch / closing the tab ask before discarding it.
+            // Everything else guardWritable() refuses (read-only file, running archive) stays refused.
+            const inConflict = !!s.conflict && !busyOperation && !s.blocked.kanban;
+            if (!inConflict && !guardWritable()) return;
 
-            // Get form values
-            const title = document.getElementById('taskTitle').value.trim();
-            const status = document.getElementById('taskStatus').value;
-            const priority = document.getElementById('taskPriority').value;
-            const category = document.getElementById('taskCategory').value.trim();
-            const assignee = document.getElementById('taskAssignee').value.trim();
-            const created = document.getElementById('taskCreated').value;
-            const started = document.getElementById('taskStarted').value;
-            const due = document.getElementById('taskDue').value;
-            const completed = document.getElementById('taskCompleted').value;
-            const tagsInput = document.getElementById('taskTags').value.trim();
-            // Only outer blank lines are removed: indentation of the first line and trailing double
-            // spaces (Markdown line breaks) are content.
-            const trimBlankLines = (v) => {
-                const ls = String(v).replace(/\r\n?/g, '\n').split('\n');
-                while (ls.length && !ls[0].trim()) ls.shift();
-                while (ls.length && !ls[ls.length - 1].trim()) ls.pop();
-                return ls.join('\n');
-            };
-            const description = trimBlankLines(document.getElementById('taskDescription').value);
-            const notes = trimBlankLines(document.getElementById('taskNotes').value);
-
-            const badLine = findStructuralLine(description, notes, formSubtasks.map(st => st.text));
+            const v = readTaskForm();
+            if (!v.title) { alert(t('alert.titleRequired')); return; }
+            // "|" separates the fields of a metadata line: "開発 | 運用" would be read back as "開発".
+            for (const [label, value] of [['taskForm.categoryLabel', v.category], ['taskForm.assignedLabel', v.assignees.join(', ')]]) {
+                if (value.includes('|')) { alert(t('alert.pipeNotAllowed', { field: t(label) })); return; }
+            }
+            const badLine = findStructuralLine(v.description, v.notes, v.subtasks.map(st => st.text));
             if (badLine) {
                 alert(t('alert.forbiddenHeading', { line: badLine.trim() }));
                 return;
             }
 
-            // Parse tags and assignees. Tags: whitespace/comma separated, "#" added if missing.
-            const tags = tagsInput ? tagsInput.split(/[\s,、]+/).filter(Boolean).map(t => t.startsWith('#') ? t : '#' + t).filter(t => t.length > 1) : [];
-            const assignees = assignee ? assignee.split(/[,、]/).map(a => a.trim()).filter(Boolean) : [];
-
-            let successMessage = '';
+            let task = null, candidate, successMessage, newNumber = 0;
             if (isEditMode) {
-                // Edit existing task
-                const taskId = document.getElementById('taskEditId').value;
                 // The edited task OBJECT must still be on the board (no lookup by id: with duplicate
                 // ids or an archived copy it could hit another task).
-                const task = (editingTask && tasks.includes(editingTask)) ? editingTask : null;
+                task = (editingTask && tasks.includes(editingTask)) ? editingTask : null;
                 if (!task) { showNotification(t('notif.staleList'), 'error'); return; }
-                if (task) {
-                    task.title = title;
-                    task.status = status;
-                    task.priority = priority;
-                    task.category = category;
-                    task.assignees = assignees;
-                    task.tags = tags;
-                    task.created = created;
-                    task.started = started;
-                    task.due = due;
-                    task.completed = completed;
-                    task.description = description;
-                    task.subtasks = formSubtasks;
-                    task.notes = notes;
-                    delete task.statusUnknown;
-                    successMessage = t('notif.taskEdited', {id: taskId});
-                }
+                candidate = applyTaskForm(task, v);
+                successMessage = t('notif.taskEdited', { id: task.id });
             } else {
-                // Create new task. The id is above the config counter AND every id already used in
-                // kanban.md or archive.md (an AI may have added tasks without bumping the counter).
+                // New id: above the config counter AND every id already used in kanban.md or
+                // archive.md (an AI may have added tasks without bumping the counter).
                 if (!canCreateNewTask()) return;
-                const s = session;
-                const rawMax = Math.max(maxIdInText(s.files.kanban.baseline || ''), maxIdInText(s.files.archive.baseline || ''));
-                config.lastTaskId = nextTaskNumber(Math.max(config.lastTaskId, rawMax), tasks, archivedTasks);
-                const newTaskId = formatTaskId(config.lastTaskId);
-                tasks.push({
-                    id: newTaskId,
-                    title,
-                    status,
-                    priority,
-                    category,
-                    assignees,
-                    tags,
-                    created: created || localDateString(),
-                    started: started || '',
-                    due,
-                    completed: completed || '',
-                    description,
-                    subtasks: formSubtasks,
-                    notes,
-                    extra: ''
-                });
-                successMessage = t('notif.taskCreated', {id: newTaskId});
+                newNumber = nextNewTaskNumber();
+                candidate = newTaskFromForm(v, formatTaskId(newNumber));
+                successMessage = t('notif.taskCreated', { id: candidate.id });
+            }
+            // Last line of defence: the task must read back from Markdown exactly as entered (the
+            // same check a load does). Otherwise the save would "succeed" and the next load would
+            // open the whole board read-only. Nothing has been changed yet.
+            const problems = taskWriteProblems(candidate, config.columns);
+            if (problems.length) {
+                alert(t('alert.cannotWriteTask', { details: problemSummary(problems) }));
+                return;
             }
 
+            if (task) {
+                Object.assign(task, candidate);
+                delete task.statusUnknown;
+            } else {
+                config.lastTaskId = newNumber;
+                tasks.push(candidate);
+            }
             closeTaskModal();
             renderKanban();
+            if (inConflict) {
+                await autoSave(); // refused while the conflict is open: marks the board unsaved
+                showNotification(t('notif.conflictKeptInMemory'), 'error');
+                renderSyncBanner();
+                return;
+            }
             await persistKanban(successMessage);
         });
 

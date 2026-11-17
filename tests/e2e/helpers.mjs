@@ -77,7 +77,7 @@ function mockFsInit() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const dom = (name, msg) => new DOMException(msg || name, name);
   const dirs = new Map();
-  const faults = {}; // key "dir/file" → { readFail, writeFail, closeFail, readDelay, writeDelay }
+  const faults = {}; // key "dir/file" → { readFail, contentFail, writeFail, closeFail, readDelay, writeDelay }
   const writeLog = [];
   const fault = (d, f) => faults[`${d}/${f}`] || {};
 
@@ -88,9 +88,16 @@ function mockFsInit() {
       const fl = fault(this._dir.name, this.name);
       if (fl.readDelay) await sleep(fl.readDelay);
       if (fl.readFail) throw dom(fl.readFail === true ? 'NotAllowedError' : fl.readFail, 'mock read failure');
+      // The file can be opened but its content cannot be read (e.g. NotReadableError while another
+      // program — OneDrive, an editor — is writing it).
+      if (fl.contentFail) {
+        const fail = async () => { throw dom('NotReadableError', 'mock content read failure'); };
+        return { name: this.name, size: 0, lastModified: Date.now(), text: fail, arrayBuffer: fail };
+      }
       const entry = this._dir._files.get(this.name);
       if (!entry) throw dom('NotFoundError', 'mock: file missing');
-      return new File([entry.text], this.name, { lastModified: entry.mtime });
+      // entry.bytes: raw bytes written by a test (e.g. Shift_JIS); otherwise the text as UTF-8.
+      return new File([entry.bytes || entry.text], this.name, { lastModified: entry.mtime });
     }
     async createWritable() {
       const fl = fault(this._dir.name, this.name);
@@ -136,6 +143,13 @@ function mockFsInit() {
     dir: (name) => dirs.get(name),
     read: (d, f) => { const e = dirs.get(d)._files.get(f); return e ? e.text : null; },
     write: (d, f, text) => { dirs.get(d)._files.set(f, { text, mtime: Date.now() }); },
+    // Raw bytes (array of numbers) — a file in another encoding than UTF-8.
+    writeBytes: (d, f, bytes) => { dirs.get(d)._files.set(f, { text: null, bytes: Uint8Array.from(bytes), mtime: Date.now() }); },
+    readBytes: (d, f) => {
+      const e = dirs.get(d)._files.get(f);
+      if (!e) return null;
+      return Array.from(e.bytes || new TextEncoder().encode(e.text));
+    },
     remove: (d, f) => { dirs.get(d)._files.delete(f); },
     files: (d) => [...dirs.get(d)._files.keys()].sort(),
     setFault: (d, f, v) => { faults[`${d}/${f}`] = v || {}; },
@@ -206,6 +220,8 @@ export async function waitIdle(page) {
 
 export const readFile = (page, d, f) => page.evaluate(([a, b]) => window.__mockFS.read(a, b), [d, f]);
 export const writeFile = (page, d, f, text) => page.evaluate(([a, b, c]) => window.__mockFS.write(a, b, c), [d, f, text]);
+export const writeBytes = (page, d, f, bytes) => page.evaluate(([a, b, c]) => window.__mockFS.writeBytes(a, b, c), [d, f, Array.from(bytes)]);
+export const readBytes = (page, d, f) => page.evaluate(([a, b]) => window.__mockFS.readBytes(a, b), [d, f]);
 export const setFault = (page, d, f, v) => page.evaluate(([a, b, c]) => window.__mockFS.setFault(a, b, c), [d, f, v]);
 export const syncState = (page) => page.evaluate(() => document.getElementById('syncStatus').dataset.state);
 export const notificationText = (page) => page.evaluate(() => document.getElementById('notificationText').textContent);

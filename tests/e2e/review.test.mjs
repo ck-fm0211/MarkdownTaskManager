@@ -4,8 +4,9 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   launchBrowser, newPage, createDir, openFolder, waitIdle, readFile, writeFile, setFault,
-  syncState, notificationText, board, archive, task,
+  syncState, notificationText, board, archive, task, writeBytes, readBytes,
 } from './helpers.mjs';
+import { readFileSync } from 'node:fs';
 
 let browser = null;
 let skipReason = '';
@@ -379,5 +380,207 @@ describe('recent projects (real IndexedDB)', () => {
     });
     assert.deepEqual(res.errors, []);
     assert.deepEqual(res.names, ['A renamed', 'B']);
+  });
+});
+
+// ----- Review of ce7130e (round 5) -----
+
+const downloadText = async (page) => {
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#syncDownloadBtn', { timeout: 5000 })]);
+  return readFileSync(await dl.path(), 'utf8');
+};
+
+describe('review round 5: archive, project switch, conflicts', () => {
+  it('an archive queued behind a re-read of archive.md does not write it once the re-read makes it read-only (review 1-1)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(2, 'B', '', 'done'), { lastId: 2 }), 'archive.md': archive(task(1, 'A', '**Subtasks**:\n- [ ] one', 'done')) });
+    await openFolder(page, 'p');
+    // An AI adds a hand-over line to archive.md that this page cannot keep (not a checkbox).
+    const edited = archive(task(1, 'A', '**Subtasks**:\n- [ ] one\n引継ぎ: 担当者へ連絡済み', 'done'));
+    await writeFile(page, 'p', 'archive.md', edited);
+    await setFault(page, 'p', 'archive.md', { readDelay: 700 });
+    await page.click('#archiveBtn'); // opening the archive list re-reads archive.md (slowly)
+    await page.click('#kanbanView .task-card'); // the board is still usable meanwhile
+    await page.click('#taskModalActions button[onclick="archiveCurrentTask()"]');
+    await page.waitForFunction(() => document.getElementById('archiveModal').classList.contains('active'));
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => !!session.blocked.archive), true, 'archive.md is read-only after the re-read');
+    assert.equal(await readFile(page, 'p', 'archive.md'), edited, 'archive.md was not rewritten (hand-over line kept)');
+    assert.match(await readFile(page, 'p', 'kanban.md'), /TASK-002/, 'the task is still on the board');
+    assert.doesNotMatch(await notificationText(page), /Task archived/);
+  });
+
+  it('a switch that waited for permission does not replace a project opened (and edited) meanwhile (review 1-2)', async ({ page, dialogs }) => {
+    for (const n of ['A', 'B', 'C']) {
+      await createDir(page, n, { 'kanban.md': board(task(1, `${n} task`), { lastId: 1 }), 'archive.md': archive('') });
+    }
+    await openFolder(page, 'A');
+    await page.evaluate(async () => {
+      window.__projects = ['C', 'B', 'A'].map((n) => ({ handle: window.__mockFS.dir(n), name: n, customName: '', lastAccessed: Date.now() }));
+      window.__permissionB = new Promise((r) => { window.__grantB = r; });
+      window.__mockFS.dir('B').queryPermission = async () => { await window.__permissionB; return 'granted'; };
+      await updateProjectSelector();
+    });
+    await page.selectOption('#projectSelector', '1'); // B: waits for the permission
+    await page.selectOption('#projectSelector', '0'); // C: opens right away
+    await page.waitForFunction(() => session && session.dir.name === 'C');
+    await waitIdle(page);
+    await setFault(page, 'C', 'kanban.md', { writeFail: true });
+    await page.evaluate(() => { tasks[0].title = 'C edited, not saved'; return autoSave(); });
+    assert.equal(await page.evaluate(() => isDirty()), true);
+    const seen = dialogs.seen.length;
+    await page.evaluate(() => window.__grantB());
+    await page.waitForTimeout(300);
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => session.dir.name), 'C', 'still on C');
+    assert.equal(await page.evaluate(() => tasks[0].title), 'C edited, not saved', 'the unsaved edit is still there');
+    assert.deepEqual(dialogs.seen.slice(seen), [], 'nothing was discarded behind the user\'s back');
+  });
+
+  it('saving the form during a conflict keeps the edit in the page: exported, and reload asks first (review 1-4 / 2-4)', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'Old title'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#taskTitle', 'Typed title');
+    const external = board(task(1, 'Old title') + '\n' + task(2, 'added by AI'), { lastId: 2 });
+    await writeFile(page, 'p', 'kanban.md', external);
+    await page.evaluate(() => checkExternalChanges()); // e.g. the window got the focus back
+    assert.equal(await syncState(page), 'conflict');
+    await page.click('#taskFormSubmitBtn');
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), false);
+    assert.match(await notificationText(page), /kept in this page only/);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), external, 'nothing was written');
+    assert.equal(await page.evaluate(() => isDirty()), true);
+    assert.match(await downloadText(page), /### TASK-001 \| Typed title/);
+    dialogs.queue.push(false); // "discard unsaved changes?" → Cancel
+    await page.click('#syncReloadBtn');
+    assert.match(dialogs.seen.at(-1).message, /DISCARDED/);
+    assert.equal(await page.evaluate(() => tasks[0].title), 'Typed title', 'cancel keeps the edit');
+  });
+
+  it('with the form still open, the conflict banner is usable above it and the export contains the typed text (review 1-4 / 2-4)', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'T'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#taskDescription', '入力途中の説明');
+    await writeFile(page, 'p', 'kanban.md', board(task(1, 'T changed outside'), { lastId: 1 }));
+    await page.evaluate(() => checkExternalChanges());
+    assert.equal(await syncState(page), 'conflict');
+    assert.equal(await page.evaluate(() => isDirty()), false, 'the board itself has no unsaved change');
+    assert.match(await downloadText(page), /入力途中の説明/, 'the open form is part of the export');
+    dialogs.queue.push(false);
+    await page.click('#syncReloadBtn', { timeout: 5000 });
+    assert.match(dialogs.seen.at(-1).message, /DISCARDED/, 'reload asks before discarding the form');
+    assert.equal(await page.inputValue('#taskDescription'), '入力途中の説明', 'the form is still open with its text');
+    dialogs.queue.push(false);
+    await page.click('#newTaskModal .close-btn');
+    assert.match(dialogs.seen.at(-1).message, /Discard what you typed/);
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), true);
+  });
+
+  it('a failed automatic reload keeps its error instead of reporting success (review 2-5)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'T'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await writeFile(page, 'p', 'kanban.md', board(task(1, 'T2'), { lastId: 1 }));
+    await setFault(page, 'p', 'archive.md', { readDelay: 300 });
+    const check = page.evaluate(() => checkExternalChanges());
+    await page.waitForTimeout(100);
+    await setFault(page, 'p', 'kanban.md', { readFail: true }); // the reload itself cannot read kanban.md
+    await check;
+    assert.doesNotMatch(await notificationText(page), /Changes made outside this page were loaded/);
+    assert.match(await notificationText(page), /Could not read kanban\.md/);
+  });
+});
+
+describe('review round 5: task form', () => {
+  it('a language switch while editing keeps the selected priority and a custom one (review 1-6)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'A', '**Priority**: High') + '\n' + task(2, 'B', '**Priority**: 至急'), { lastId: 2 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('#kanbanView .task-card:has-text("A") .task-edit-btn');
+    assert.equal(await page.inputValue('#taskPriority'), 'High');
+    await page.selectOption('#languageSelector', 'ja');
+    assert.equal(await page.inputValue('#taskPriority'), 'High', 'still High after the switch');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-001 \| A\n\*\*Status\*\*: todo\n\*\*Priority\*\*: High\n/);
+    await page.click('#kanbanView .task-card:has-text("B") .task-edit-btn');
+    await page.selectOption('#languageSelector', 'en');
+    assert.equal(await page.inputValue('#taskPriority'), '至急', 'a custom priority survives the switch');
+  });
+
+  it('the form refuses values that would not read back; "＃" tags are stored as "#" (review 1-8 / 2-3)', async ({ page, dialogs }) => {
+    const start = board('', { lastId: 0 });
+    await createDir(page, 'p', { 'kanban.md': start, 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('#newTaskBtn');
+    await page.fill('#taskTitle', '月次締め');
+    await page.fill('#taskCategory', '開発 | 運用');
+    await page.click('#taskFormSubmitBtn');
+    assert.equal(dialogs.seen.length, 1, 'the form refused the category (an alert was shown)');
+    assert.match(dialogs.seen.at(-1).message, /cannot contain "\|"/);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start, 'nothing written');
+    assert.equal(await page.evaluate(() => tasks.length), 0, 'nothing added to the board');
+    await page.fill('#taskCategory', '経理');
+    await page.fill('#taskAssignee', '@a');
+    await page.fill('#taskTags', '＃経理 ＃月次');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /\*\*Tags\*\*: #経理 #月次\n/);
+    await page.evaluate(() => reloadFromDisk({ force: true }));
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => session.blocked.kanban), null, 'the saved file is not read-only');
+    await page.click('#newTaskBtn');
+    await page.fill('#taskTitle', '   ');
+    const before = dialogs.seen.length;
+    await page.click('#taskFormSubmitBtn');
+    assert.equal(dialogs.seen.length, before + 1, 'a blank title was refused (an alert was shown)');
+    assert.match(dialogs.seen.at(-1).message, /enter a title/);
+    assert.equal(await page.evaluate(() => tasks.length), 1);
+  });
+});
+
+describe('review round 5: reading', () => {
+  it('a file that opens but cannot be read is never taken as unchanged: nothing is written (review 2-8)', async ({ page }) => {
+    const start = board(task(1, 'T'), { lastId: 1 });
+    await createDir(page, 'p', { 'kanban.md': start, 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await setFault(page, 'p', 'kanban.md', { contentFail: true });
+    const ok = await page.evaluate(() => { tasks[0].title = 'edited'; return autoSave(); });
+    assert.equal(ok, false);
+    assert.equal(await syncState(page), 'error');
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start);
+    assert.equal(await page.evaluate(() => isDirty()), true, 'the edit is kept (unsaved) for a retry / export');
+  });
+});
+
+describe('review round 5: text encoding', () => {
+  // "タスク" in Shift_JIS (cp932): what Windows PowerShell 5.1 Set-Content / Add-Content write.
+  const SJIS = [0x83, 0x5e, 0x83, 0x58, 0x83, 0x4e];
+  const utf8 = (s) => Array.from(new TextEncoder().encode(s));
+
+  it('a Shift_JIS archive.md is never rewritten: archive and restore are refused (review 2-1)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(2, 'B', '', 'done'), { lastId: 2 }) });
+    const bytes = [...utf8('# Task Archive\n<!-- Format: v2 -->\n\n## Archives\n\n### TASK-001 | '), ...SJIS, ...utf8('\n**Status**: done\n')];
+    await writeBytes(page, 'p', 'archive.md', bytes);
+    await openFolder(page, 'p');
+    assert.equal(await page.evaluate(() => (session.blocked.archive || []).map((p) => p.code).join()), 'not-utf8');
+    assert.equal((await page.evaluate(() => archiveTask(tasks[0]))).ok, false);
+    assert.equal((await page.evaluate(() => unarchiveTaskObject(archivedTasks[0]))).ok, false);
+    await waitIdle(page);
+    assert.deepEqual(await readBytes(page, 'p', 'archive.md'), bytes, 'archive.md bytes unchanged');
+    assert.match(await readFile(page, 'p', 'kanban.md'), /TASK-002/);
+  });
+
+  it('a kanban.md that is not UTF-8 opens read-only and is never saved (review 2-1)', async ({ page }) => {
+    const text = board('### TASK-001 | X\n**Status**: todo\n', { lastId: 1 });
+    const i = text.indexOf('X\n');
+    const bytes = [...utf8(text.slice(0, i)), ...SJIS, ...utf8(text.slice(i + 1))];
+    await createDir(page, 'p', { 'archive.md': archive('') });
+    await writeBytes(page, 'p', 'kanban.md', bytes);
+    await openFolder(page, 'p');
+    assert.equal(await syncState(page), 'blocked');
+    await page.evaluate(() => { tasks[0].title = 'edited'; return autoSave(); });
+    await waitIdle(page);
+    assert.deepEqual(await readBytes(page, 'p', 'kanban.md'), bytes, 'kanban.md bytes unchanged');
+    assert.match(await page.textContent('#syncBannerDetail'), /not UTF-8/);
   });
 });

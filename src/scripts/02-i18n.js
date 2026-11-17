@@ -213,7 +213,7 @@
                 'confirm.initFolder': 'The folder "{name}" has no kanban.md.\n\nCreate a new board (kanban.md and archive.md) in this folder?\n\nCancel if you picked the wrong folder (e.g. the folder that only contains task-manager.html).',
                 'confirm.initEmptyKanban': 'kanban.md in "{name}" is EMPTY.\n\nInitialise it as a new board?\n\nCancel if the file may have been damaged — check the OneDrive version history first.',
                 'confirm.leaveUnsaved': 'This project has unsaved changes (or a conflict).\n\nLeave it and discard them?\nCancel to stay and export them first.',
-                'alert.forbiddenHeading': 'This line would be read back as something else and was not saved:\n\n{line}\n\nNot allowed: "### TASK-…" and "## …" headings (outside code blocks), code blocks that are not closed; in the description also lines starting with **Status**:, **Priority**:, **Tags**:, **Subtasks**, **Notes** etc.',
+                'alert.forbiddenHeading': 'This line would be read back as something else and was not saved:\n\n{line}\n\nNot allowed: "### TASK-…" lines, "## …" headings (outside code blocks), code blocks that are not closed; in the description also lines starting with **Status**:, **Priority**:, **Tags**:, **Subtasks**, **Notes** etc. (outside code blocks).',
                 'alert.invalidColumnId': 'Invalid column id: it must be non-empty, unique and must not contain | ( or ).',
                 'alert.lastColumn': 'The last column cannot be deleted.',
                 'alert.columnNotEmpty': 'This column still contains {count} task(s). Move them to another column first.',
@@ -258,6 +258,13 @@
                 'integrity.subtasks-in-notes': '"**Subtasks**:" written after "**Notes**:" is kept as note text, not as a checklist:',
                 'integrity.duplicate-id': 'Duplicate task id(s): {ids}',
                 'integrity.unknown-status': 'Task(s) with a **Status** that matches no column (shown in the first column):',
+                'integrity.task-read-twice': 'Task block(s) that were read more than once or do not match their "### TASK-" line:',
+                'integrity.not-utf8': 'This file is not UTF-8 text (for example Shift_JIS written by Windows PowerShell 5.1 or Notepad "ANSI"). It is shown as read, but never written: save it again as UTF-8 and reload.',
+                'alert.titleRequired': 'Please enter a title.',
+                'alert.pipeNotAllowed': '"{field}" cannot contain "|": it separates the fields in kanban.md and the rest would be lost. Use "/" or "・" instead.',
+                'alert.cannotWriteTask': 'This task was NOT saved: written to kanban.md it would not read back as entered (the board would become read-only).\n\n{details}',
+                'notif.conflictKeptInMemory': 'Not saved because of the conflict: the change is kept in this page only. Use "Download unsaved" or "Copy", then reload from disk.',
+                'confirm.discardForm': 'Discard what you typed in this form?',
                 'locale.dates': 'en-US',
 
                 // Language selector
@@ -1021,7 +1028,7 @@
                 'confirm.initFolder': 'フォルダー「{name}」には kanban.md がありません。\n\nこのフォルダーに新しいボード（kanban.md と archive.md）を作成しますか？\n\nフォルダーを間違えた場合（task-manager.html だけを置くアプリ用フォルダーなど）はキャンセルしてください。',
                 'confirm.initEmptyKanban': 'フォルダー「{name}」の kanban.md は空です。\n\n新しいボードとして初期化しますか？\n\nファイルが壊れた可能性がある場合はキャンセルし、先に OneDrive のバージョン履歴を確認してください。',
                 'confirm.leaveUnsaved': 'このプロジェクトには未保存の変更（または競合）があります。\n\n破棄して移動しますか？\nキャンセルするとこの画面に残り、先に退避できます。',
-                'alert.forbiddenHeading': '次の行は読み込み時に別の意味に解釈されるため、保存しませんでした:\n\n{line}\n\n書けない行: 「### TASK-…」や「## …」の見出し（コードブロック外）、閉じていないコードブロック。説明欄では「**Status**:」「**Priority**:」「**Tags**:」「**Subtasks**」「**Notes**」などで始まる行も不可。',
+                'alert.forbiddenHeading': '次の行は読み込み時に別の意味に解釈されるため、保存しませんでした:\n\n{line}\n\n書けない行: 「### TASK-…」の行、「## …」の見出し（コードブロック外）、閉じていないコードブロック。説明欄では「**Status**:」「**Priority**:」「**Tags**:」「**Subtasks**」「**Notes**」などで始まる行も不可（コードブロック外）。',
                 'alert.invalidColumnId': '列 ID が不正です。空でなく、他の列と重複せず、| ( ) を含まない値にしてください。',
                 'alert.lastColumn': '最後の 1 列は削除できません。',
                 'alert.columnNotEmpty': 'この列にはまだ {count} 件のタスクがあります。先に別の列へ移動してください。',
@@ -1066,6 +1073,13 @@
                 'integrity.subtasks-in-notes': '「**Notes**:」の後に書かれた「**Subtasks**:」は、チェックリストではなくメモの文章として扱います:',
                 'integrity.duplicate-id': '重複したタスク ID があります: {ids}',
                 'integrity.unknown-status': 'どの列とも一致しない **Status** のタスクがあります（先頭の列に表示）:',
+                'integrity.task-read-twice': '2 回以上読み込まれた、または「### TASK-」行と一致しないタスクがあります:',
+                'integrity.not-utf8': 'このファイルは UTF-8 ではありません（Windows PowerShell 5.1 の Set-Content や、メモ帳の「ANSI」で保存した Shift_JIS など）。表示はしますが、書き込みは行いません。UTF-8 で保存し直してから再読込してください。',
+                'alert.titleRequired': 'タイトルを入力してください。',
+                'alert.pipeNotAllowed': '「{field}」には「|」を使えません（kanban.md の項目の区切りなので、それ以降が失われます）。「/」や「・」を使ってください。',
+                'alert.cannotWriteTask': 'このタスクは保存していません。このまま kanban.md に書くと、入力どおりに読み戻せません（ボード全体が読み取り専用になります）。\n\n{details}',
+                'notif.conflictKeptInMemory': '競合のため保存していません。変更はこの画面の中だけに残しています。「未保存分をダウンロード」か「コピー」で退避してから、ディスクから再読込してください。',
+                'confirm.discardForm': 'このフォームに入力した内容を破棄しますか？',
                 'locale.dates': 'ja-JP',
 
                 // Language selector
@@ -1315,17 +1329,10 @@
                 }
             });
 
-            // Update priority options - use language-independent keys
-            const prioritySelect = document.getElementById('taskPriority');
-            if (prioritySelect) {
-                prioritySelect.innerHTML = `
-                    <option value="">${t('taskForm.priorityNone')}</option>
-                    <option value="Critical">${t('taskForm.priorityCritical')}</option>
-                    <option value="High">${t('taskForm.priorityHigh')}</option>
-                    <option value="Medium">${t('taskForm.priorityMedium')}</option>
-                    <option value="Low">${t('taskForm.priorityLow')}</option>
-                `;
-            }
+            // Priority options: same list as when the form was opened (configured priorities + a
+            // custom value), only the labels change; the selected value is kept (the form may be
+            // open with unsaved input).
+            renderPriorityOptions();
 
             // Update form help texts
             const tagsHelp = document.querySelector('label[for="taskTags"] + input + small');

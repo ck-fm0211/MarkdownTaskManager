@@ -104,16 +104,9 @@
                 `<option value="${escapeHtml(col.id)}">${escapeHtml(col.name)}</option>`
             ).join('');
 
-            // Populate priorities select. "None" is always available, and a priority value that is
-            // not in the config (written by hand / an AI) is offered as-is, so opening and saving the
-            // form never erases it.
-            const priorityOptions = [`<option value="">${escapeHtml(t('taskForm.priorityNone'))}</option>`]
-                .concat(config.priorities.map(priority =>
-                    `<option value="${escapeHtml(clean(priority))}">${escapeHtml(displayPriority(priority))}</option>`));
-            if (task && task.priority && !findPriorityLabel(config.priorities, task.priority)) {
-                priorityOptions.push(`<option value="${escapeHtml(task.priority)}">${escapeHtml(task.priority)}</option>`);
-            }
-            document.getElementById('taskPriority').innerHTML = priorityOptions.join('');
+            // Populate priorities select (see renderPriorityOptions).
+            const pLabel = task ? findPriorityLabel(config.priorities, task.priority) : null;
+            renderPriorityOptions(task ? (pLabel ? clean(pLabel) : (task.priority || '')) : '');
 
             // Update autocomplete
             updateAutocomplete();
@@ -127,8 +120,6 @@
                         `<option value="${escapeHtml(task.status)}">⚠️ ${escapeHtml(task.status)}</option>`);
                 }
                 document.getElementById('taskStatus').value = task.status;
-                const pLabel = findPriorityLabel(config.priorities, task.priority);
-                document.getElementById('taskPriority').value = pLabel ? clean(pLabel) : (task.priority || '');
                 document.getElementById('taskCategory').value = task.category || '';
                 document.getElementById('taskAssignee').value = task.assignees.join(', ');
                 document.getElementById('taskCreated').value = task.created || '';
@@ -150,6 +141,115 @@
 
             renderFormSubtasks();
             modal.classList.add('active');
+            taskFormSnapshot = taskFormState();
+        }
+
+        // Priority <select> of the task form. "None" is always available, and a priority value that
+        // is not in the config (written by hand / an AI) is offered as-is, so opening and saving the
+        // form never erases it. Called again on a language switch: only the LABELS change, the
+        // selected value (and a custom value) is kept — the form may be open with unsaved input.
+        function renderPriorityOptions(value) {
+            const sel = document.getElementById('taskPriority');
+            if (!sel) return;
+            const current = value === undefined ? sel.value : value;
+            const priorities = (config && config.priorities && config.priorities.length) ? config.priorities : DEFAULT_PRIORITIES;
+            const options = [`<option value="">${escapeHtml(t('taskForm.priorityNone'))}</option>`]
+                .concat(priorities.map(priority =>
+                    `<option value="${escapeHtml(clean(priority))}">${escapeHtml(displayPriority(priority))}</option>`));
+            if (current && !priorities.some(p => clean(p) === current)) {
+                options.push(`<option value="${escapeHtml(current)}">${escapeHtml(current)}</option>`);
+            }
+            sel.innerHTML = options.join('');
+            sel.value = current || '';
+        }
+
+        // ----- Unsaved input in the task form -----
+        // The form's values right after it was opened. A form whose values differ is "unsaved work":
+        // reload / project switch / closing the tab ask first, and the conflict export includes it.
+        const TASK_FORM_FIELDS = ['taskTitle', 'taskStatus', 'taskPriority', 'taskCategory', 'taskAssignee', 'taskCreated',
+            'taskStarted', 'taskDue', 'taskCompleted', 'taskTags', 'taskDescription', 'taskNotes', 'formSubtaskInput'];
+        let taskFormSnapshot = null;
+
+        function taskFormState() {
+            const v = {};
+            TASK_FORM_FIELDS.forEach(id => { const el = document.getElementById(id); v[id] = el ? el.value : ''; });
+            v.subtasks = formSubtasks;
+            return JSON.stringify(v);
+        }
+
+        function isTaskFormOpen() {
+            const m = document.getElementById('newTaskModal');
+            return !!m && m.classList.contains('active');
+        }
+
+        function isFormDirty() {
+            return isTaskFormOpen() && taskFormSnapshot !== null && taskFormState() !== taskFormSnapshot;
+        }
+
+        // Values typed in the form, as task fields (no validation).
+        function readTaskForm() {
+            const val = id => document.getElementById(id).value;
+            // Only outer blank lines are removed: indentation of the first line and trailing double
+            // spaces (Markdown line breaks) are content.
+            const trimBlankLines = (v) => {
+                const ls = String(v).replace(/\r\n?/g, '\n').split('\n');
+                while (ls.length && !ls[0].trim()) ls.shift();
+                while (ls.length && !ls[ls.length - 1].trim()) ls.pop();
+                return ls.join('\n');
+            };
+            const tagsInput = val('taskTags').trim();
+            const assignee = val('taskAssignee').trim();
+            return {
+                title: val('taskTitle').trim(),
+                status: val('taskStatus'),
+                priority: val('taskPriority'),
+                category: val('taskCategory').trim(),
+                // Whitespace / comma separated; a leading "#" or full-width "＃" (Japanese IME) is
+                // the tag marker, stored as one ASCII "#".
+                tags: tagsInput ? tagsInput.split(/[\s,、，]+/).map(x => x.replace(/^[#＃]+/, '')).filter(Boolean).map(x => '#' + x) : [],
+                assignees: assignee ? assignee.split(/[,、，]/).map(a => a.trim()).filter(Boolean) : [],
+                created: val('taskCreated'),
+                started: val('taskStarted'),
+                due: val('taskDue'),
+                completed: val('taskCompleted'),
+                description: trimBlankLines(val('taskDescription')),
+                notes: trimBlankLines(val('taskNotes')),
+                subtasks: formSubtasks.map(st => ({ ...st }))
+            };
+        }
+
+        // `base` with the form values applied (a new object; `base` is not changed).
+        function applyTaskForm(base, v) {
+            const task = { ...base, ...v, subtasks: v.subtasks.map(st => ({ ...st })) };
+            delete task.statusUnknown;
+            return task;
+        }
+
+        // Number of the next new task: above the config counter AND every id already used in
+        // kanban.md or archive.md (an AI may have added tasks without bumping the counter).
+        function nextNewTaskNumber() {
+            const s = session;
+            const rawMax = s ? Math.max(maxIdInText(s.files.kanban.baseline || ''), maxIdInText(s.files.archive.baseline || '')) : 0;
+            return nextTaskNumber(Math.max(config.lastTaskId || 0, rawMax), tasks, archivedTasks);
+        }
+
+        function newTaskFromForm(v, id) {
+            return applyTaskForm({ id, extra: '' }, { ...v, created: v.created || localDateString() });
+        }
+
+        // tasks[] as shown, plus what is typed in an open form (used by the export of unsaved work).
+        function boardWithOpenForm() {
+            if (!isFormDirty()) return tasks;
+            const v = readTaskForm();
+            if (isEditMode && editingTask) {
+                const i = tasks.indexOf(editingTask);
+                const edited = applyTaskForm(editingTask, v);
+                if (i < 0) return tasks.concat([edited]);
+                const list = tasks.slice();
+                list[i] = edited;
+                return list;
+            }
+            return tasks.concat([newTaskFromForm(v, formatTaskId(nextNewTaskNumber()))]);
         }
 
         function closeTaskModal() {
@@ -158,6 +258,13 @@
             formSubtasks = [];
             isEditMode = false;
             editingTask = null;
+            taskFormSnapshot = null;
+        }
+
+        // × / Cancel: typed input is only thrown away after confirmation.
+        function cancelTaskModal() {
+            if (isFormDirty() && !confirm(t('confirm.discardForm'))) return;
+            closeTaskModal();
         }
 
         // Form subtasks management
