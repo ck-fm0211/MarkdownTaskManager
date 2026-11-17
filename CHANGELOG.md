@@ -9,6 +9,21 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes, round 4 (final review)
+- Config keys accept any non-line-break space around the colon (full-width space U+3000, NBSP) in
+  both the parser and the loss check (a Japanese IME no longer makes a board read-only).
+- Code fences are checked per task: a ``` / ~~~ block not closed inside its task is reported
+  (a `### TASK-` line inside a code block would otherwise silently become a new task); an unclosed
+  fence can no longer be "closed" by a code block of a later task. The task form refuses unclosed fences.
+- New ids count every heading-like task id after NFKC (`## TASK-050`, `###TASK-070`, `### TASK-０６０`).
+- Release ZIP: `-dirty` and "work in progress" only reflect TRACKED changes; the public manifest
+  records counts only — no names of untracked or secret-looking files.
+- Language switch re-renders an open archived-task dialog read-only; edit / archive / delete and the
+  form never fall back to "the task with the same id".
+- An empty kanban.md is initialised only after confirmation (it may be a damaged file).
+- Links keep `&` in query strings / mailto; site-relative paths must resolve to the page's own host.
+- Docs corrected (SAFETY / OPERATIONS / USER_GUIDE, AI_WORKFLOW, AGENTS).
+
 ### Review fixes, round 3
 - Config values never span lines: an empty `**Columns**:` (or other key) no longer swallows the next
   config line; the configuration part is also checked to read back identically after a save.

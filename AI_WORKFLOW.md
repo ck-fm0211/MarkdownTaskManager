@@ -201,6 +201,8 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
 - Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
   `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is
   notes (a `**Subtasks**:` written after it is not a subtask list). No `## ` headings after `## Tasks`.
+  Close every ```` ``` ```` / `~~~` code block inside the task where it starts (an unclosed block makes
+  the board read-only; a `### TASK-` line inside a code block would otherwise become a separate task).
 - Keep the header / configuration part to the known lines (title, `<!-- … -->` comments, `**Columns**`,
   `**Categories**`, `**Users**`, `**Priorities**`, `**Tags**`); anything else makes the board read-only.
 - `**Status**:` must be a column **id** from `**Columns**` (the part in parentheses). An unknown
