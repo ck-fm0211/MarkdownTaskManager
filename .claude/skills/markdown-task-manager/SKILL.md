@@ -49,6 +49,16 @@ What was done.
 
 **Why?** All tasks share one `## Tasks` section, so a stray `##`/`###` heading inside a task can break parsing.
 
+## 🤝 Co-editing rules (this fork)
+
+- Real data lives in the data folder (`npm run tasks -- where`), not in the repository samples.
+- Ask the user to stop editing in the browser before you edit; the app refuses to overwrite
+  external changes (it shows a conflict) but simultaneous writes cannot be prevented.
+- New id: `npm run tasks -- next-id` (unique across kanban.md AND archive.md). Never reuse ids.
+- After editing: `npm run tasks -- check` must print `[OK]` (otherwise the app opens the file read-only).
+- Archive = append to `archive.md` first, then remove from `kanban.md`; keep `**Status**:`.
+- Japanese text is fine everywhere except the Markdown keys (`**Status**`, `## Tasks`, …).
+
 ## 🔄 Workflow
 
 > **V2 — status is a field, not a position.** A task's column is its `**Status**:`

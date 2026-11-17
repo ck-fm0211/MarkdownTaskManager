@@ -82,6 +82,10 @@ heading inside a task can break parsing. Keep notes/description heading-free.
 - Completed tasks remain in "✅ Done"
 - **Only on user request** → move to `archive.md` section `## ✅ Archives`
 - **Never archive directly at the end of work**
+- Order (no task may be lost if something fails half-way): **first append the block to
+  `archive.md`, then delete it from `kanban.md`**. Keep its `**Status**:` (the original column id —
+  it is used when the task is restored). If the same id already exists in `archive.md`, compare the
+  two blocks and ask the user; never merge or overwrite silently.
 
 ---
 
@@ -127,6 +131,7 @@ whole file. Moving a task is a single `**Status**:` edit — do **not** move the
 ```markdown
 ### TASK-001 | Fix login bug
 
+**Status**: todo
 **Priority**: Critical | **Category**: Backend | **Assigned**: @bob
 **Created**: 2025-01-20 | **Due**: 2025-01-21
 **Tags**: #bug #urgent
@@ -142,6 +147,7 @@ Check Redis, related to yesterday's deployment.
 ```markdown
 ### TASK-042 | Notification system
 
+**Status**: done
 **Priority**: High | **Category**: Backend | **Assigned**: @alice
 **Created**: 2025-01-15 | **Started**: 2025-01-18 | **Finished**: 2025-01-22
 **Tags**: #feature
@@ -174,6 +180,31 @@ Real-time notifications with WebSockets.
 - ✅ Auto-reconnection
 - ✅ Emails < 2s
 ```
+
+---
+
+## 🤝 Co-editing with the browser app (this fork)
+
+The browser app (`task-manager.html`) and AI assistants edit the same files.
+
+- The app keeps the exact text it last read. Before every save it reads the file again; if the
+  content differs it does **not** write, shows a conflict and lets the user export their unsaved
+  changes and reload. So an AI edit is never silently overwritten — but two writes in the same
+  instant cannot be prevented. **Ask the user to stop editing in the browser while you edit**,
+  and to reload (🔄) afterwards.
+- If a file contains something the app would lose on save (malformed `### TASK-` header, text
+  outside any task, non-checkbox lines inside `**Subtasks**:`, unknown lines in the configuration
+  part…), the app opens it **read-only**. Run `npm run tasks -- check` after editing.
+- Task ids are unique across `kanban.md` **and** `archive.md`. Get a new one with
+  `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids.
+  Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
+- `**Status**:` must be a column **id** from `**Columns**` (the part in parentheses). An unknown
+  value is kept as written and shown in the first column with a warning.
+- Japanese (or any language) is fine for titles, descriptions, notes, tags (`#経理`), categories,
+  users and column display names. The Markdown keys (`**Status**`, `**Priority**`, `## Tasks`, …)
+  are a fixed format: never translate them.
+- Where the real data lives: see `AGENTS.md` (`npm run tasks -- where`). The `kanban.md` /
+  `archive.md` at the repository root are dummy samples.
 
 ---
 
