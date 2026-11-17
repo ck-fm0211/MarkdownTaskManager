@@ -584,3 +584,31 @@ describe('review round 5: text encoding', () => {
     assert.match(await page.textContent('#syncBannerDetail'), /not UTF-8/);
   });
 });
+
+describe('review round 6: task form', () => {
+  it('subtask text typed but not added is part of the conflict export and of the in-page save (round 6: review 1-1)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'T', SUB), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#formSubtaskInput', '未追加のサブタスク'); // "Add" is not pressed
+    const external = board(task(1, 'T changed outside', SUB), { lastId: 1 });
+    await writeFile(page, 'p', 'kanban.md', external);
+    await page.evaluate(() => checkExternalChanges());
+    assert.equal(await syncState(page), 'conflict');
+    assert.match(await downloadText(page), /- \[ \] step one\n- \[ \] 未追加のサブタスク\n/, 'the typed subtask is in the export');
+    await page.click('#taskFormSubmitBtn'); // during the conflict: applied to the page only
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), false);
+    assert.deepEqual(await page.evaluate(() => tasks[0].subtasks.map((s) => s.text)), ['step one', '未追加のサブタスク']);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), external, 'nothing was written');
+  });
+
+  it('"Save" with subtask text typed but not added saves it as a subtask (round 6: review 1-1)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'T', SUB), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#formSubtaskInput', '  step two  ');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /\*\*Subtasks\*\*:\n- \[ \] step one\n- \[ \] step two\n/);
+  });
+});

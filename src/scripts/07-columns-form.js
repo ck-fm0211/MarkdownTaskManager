@@ -199,6 +199,9 @@
             };
             const tagsInput = val('taskTags').trim();
             const assignee = val('taskAssignee').trim();
+            // Subtask text typed but not yet added with "+" is part of the input (as if "+" had been
+            // pressed): "Save" adds it, the conflict export contains it (it was silently dropped).
+            const pendingSubtask = val('formSubtaskInput').trim();
             return {
                 title: val('taskTitle').trim(),
                 status: val('taskStatus'),
@@ -215,6 +218,7 @@
                 description: trimBlankLines(val('taskDescription')),
                 notes: trimBlankLines(val('taskNotes')),
                 subtasks: formSubtasks.map(st => ({ ...st }))
+                    .concat(pendingSubtask ? [{ completed: false, text: pendingSubtask }] : [])
             };
         }
 
