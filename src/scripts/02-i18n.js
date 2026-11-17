@@ -77,6 +77,7 @@
                 'taskForm.cancel': 'Cancel',
                 'taskForm.create': 'Create',
                 'taskForm.save': 'Save',
+                'taskForm.keptDates': 'These dates are not written as YYYY-MM-DD, so the date fields cannot show them. They are kept as written unless you enter a new date: {dates}',
 
                 // Columns modal
                 'columns.title': 'Manage Columns',
@@ -259,6 +260,7 @@
                 'integrity.subtasks-in-notes': '"**Subtasks**:" written after "**Notes**:" is kept as note text, not as a checklist:',
                 'integrity.duplicate-id': 'Duplicate task id(s): {ids}',
                 'integrity.unknown-status': 'Task(s) with a **Status** that matches no column (shown in the first column):',
+                'integrity.non-iso-date': 'Date(s) not written as YYYY-MM-DD (kept as written, but the task form cannot show them; write them as YYYY-MM-DD):',
                 'integrity.task-read-twice': 'Task block(s) that were read more than once or do not match their "### TASK-" line:',
                 'integrity.not-utf8': 'This file is not UTF-8 text (for example Shift_JIS written by Windows PowerShell 5.1 or Notepad "ANSI"). It is shown as read, but never written: save it again as UTF-8 and reload.',
                 'alert.titleRequired': 'Please enter a title.',
@@ -892,6 +894,7 @@
                 'taskForm.cancel': 'キャンセル',
                 'taskForm.create': '作成',
                 'taskForm.save': '保存',
+                'taskForm.keptDates': '次の日付は YYYY-MM-DD 形式でないため、日付欄に表示できません。新しい日付を入れない限り、書かれたまま保持します: {dates}',
 
                 // Columns modal
                 'columns.title': '列の管理',
@@ -1075,6 +1078,7 @@
                 'integrity.subtasks-in-notes': '「**Notes**:」の後に書かれた「**Subtasks**:」は、チェックリストではなくメモの文章として扱います:',
                 'integrity.duplicate-id': '重複したタスク ID があります: {ids}',
                 'integrity.unknown-status': 'どの列とも一致しない **Status** のタスクがあります（先頭の列に表示）:',
+                'integrity.non-iso-date': 'YYYY-MM-DD 形式でない日付があります（書かれたまま保持しますが、フォームでは表示できません。YYYY-MM-DD に直してください）:',
                 'integrity.task-read-twice': '2 回以上読み込まれた、または「### TASK-」行と一致しないタスクがあります:',
                 'integrity.not-utf8': 'このファイルは UTF-8 ではありません（Windows PowerShell 5.1 の Set-Content や、メモ帳の「ANSI」で保存した Shift_JIS など）。表示はしますが、書き込みは行いません。UTF-8 で保存し直してから再読込してください。',
                 'alert.titleRequired': 'タイトルを入力してください。',

@@ -284,3 +284,27 @@ ${table}
     assert.deepEqual(plain(F.taskWriteProblems(t, [{ name: 'To Do', id: 'todo' }])), []);
   });
 });
+
+describe('dates that are not YYYY-MM-DD (round 6: review 2-3)', () => {
+  test('are kept as written, and reported as a warning (not read-only)', () => {
+    const r = F.parseKanbanContent(v2Board(`### TASK-001 | t
+**Status**: todo
+**Created**: 2026-1-5 | **Due**: 20261231
+
+### TASK-002 | u
+**Status**: todo
+**Created**: 2026-01-05 | **Due**: 2026-02-30
+`));
+    assert.deepEqual(plain(r.problems), []);
+    assert.equal(r.tasks[0].created, '2026-1-5');
+    assert.equal(r.tasks[0].due, '20261231');
+    const w = plain(r.warnings).find((x) => x.code === 'non-iso-date');
+    assert.ok(w, JSON.stringify(r.warnings));
+    assert.deepEqual(w.lines, ['TASK-001 Created: 2026-1-5', 'TASK-001 Due: 20261231', 'TASK-002 Due: 2026-02-30']);
+    assert.match(F.serializeTask(r.tasks[0]), /\*\*Created\*\*: 2026-1-5 \| \*\*Due\*\*: 20261231\n/);
+  });
+  test('YYYY-MM-DD dates give no warning', () => {
+    const r = F.parseKanbanContent(v2Board('### TASK-001 | t\n**Status**: todo\n**Created**: 2026-01-05 | **Due**: 2028-02-29\n'));
+    assert.deepEqual(plain(r.warnings), []);
+  });
+});

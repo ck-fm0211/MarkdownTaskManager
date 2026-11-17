@@ -143,6 +143,24 @@
             return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
         }
 
+        // A date as AI_WORKFLOW.md and the form's date inputs expect it: YYYY-MM-DD, a real day.
+        // Other dates ("2026-1-5", "20261231") are kept as written, but a date input cannot show
+        // them (the form keeps such a value unless the user changes it) → reported as a warning.
+        function isIsoDate(s) {
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s ?? ''));
+            if (!m) return false;
+            const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+            return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+        }
+        const DATE_FIELDS = [['created', 'Created'], ['started', 'Started'], ['due', 'Due'], ['completed', 'Finished']];
+        function nonIsoDates(list) {
+            const out = [];
+            (list || []).forEach(t => DATE_FIELDS.forEach(([f, key]) => {
+                if (t[f] && !isIsoDate(t[f])) out.push(`${t.id} ${key}: ${t[f]}`);
+            }));
+            return out;
+        }
+
         function taskNumber(id) {
             const m = /^TASK-(\d+)$/i.exec(String(id ?? '').trim());
             return m ? parseInt(m[1], 10) : NaN;
@@ -759,6 +777,8 @@
             // "**Subtasks**:" written after "**Notes**:" is kept as notes text (not a checklist).
             const inNotes = tasks.filter(t => /^\s*\*\*Subtasks\*\*\s*[:：]/m.test(t.notes || '')).map(t => t.id);
             if (inNotes.length) warnings.push({ code: 'subtasks-in-notes', lines: inNotes });
+            const badDates = nonIsoDates(tasks);
+            if (badDates.length) warnings.push({ code: 'non-iso-date', lines: badDates });
 
             return { config, tasks, formatV2, problems, warnings };
         }
@@ -779,6 +799,8 @@
             if (malformed.length) problems.push({ code: 'malformed-task-header', lines: malformed.map(l => l.trim()) });
             const dups = findDuplicateIds(tasks);
             if (dups.length) warnings.push({ code: 'duplicate-id', ids: dups });
+            const badDates = nonIsoDates(tasks);
+            if (badDates.length) warnings.push({ code: 'non-iso-date', lines: badDates });
             const formatV2 = /<!--\s*Format:\s*v2\s*-->/i.test(content);
             return { tasks, preamble, formatV2, problems, warnings };
         }

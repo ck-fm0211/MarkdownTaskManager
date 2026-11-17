@@ -122,16 +122,26 @@
                 document.getElementById('taskStatus').value = task.status;
                 document.getElementById('taskCategory').value = task.category || '';
                 document.getElementById('taskAssignee').value = task.assignees.join(', ');
-                document.getElementById('taskCreated').value = task.created || '';
-                document.getElementById('taskStarted').value = task.started || '';
-                document.getElementById('taskDue').value = task.due || '';
-                document.getElementById('taskCompleted').value = task.completed || '';
+                formKeptDates = {};
+                const kept = [];
+                TASK_FORM_DATES.forEach(([inputId, field, key]) => {
+                    const input = document.getElementById(inputId);
+                    input.value = task[field] || '';
+                    // A date input shows only YYYY-MM-DD: "2026-1-5" / "20261231" would be shown
+                    // empty and erased by "Save". Such a value is kept unless the user enters a date.
+                    if (task[field] && input.value !== task[field]) {
+                        formKeptDates[inputId] = task[field];
+                        kept.push(`${key}: ${task[field]}`);
+                    }
+                });
+                if (kept.length) showNotification(t('taskForm.keptDates', { dates: kept.join(', ') }), 'error');
                 document.getElementById('taskTags').value = task.tags.join(' ');
                 document.getElementById('taskDescription').value = task.description || '';
                 document.getElementById('taskNotes').value = task.notes || '';
                 formSubtasks = JSON.parse(JSON.stringify(task.subtasks || []));
             } else {
                 form.reset();
+                formKeptDates = {};
                 document.getElementById('taskEditId').value = '';
                 if (defaultColumnId) {
                     document.getElementById('taskStatus').value = defaultColumnId;
@@ -169,11 +179,21 @@
         const TASK_FORM_FIELDS = ['taskTitle', 'taskStatus', 'taskPriority', 'taskCategory', 'taskAssignee', 'taskCreated',
             'taskStarted', 'taskDue', 'taskCompleted', 'taskTags', 'taskDescription', 'taskNotes', 'formSubtaskInput'];
         let taskFormSnapshot = null;
+        // Date inputs: [input id, task field, Markdown key]. formKeptDates = the task's values that
+        // the date input could not show (not YYYY-MM-DD), kept until the user enters a date there.
+        const TASK_FORM_DATES = [['taskCreated', 'created', 'Created'], ['taskStarted', 'started', 'Started'],
+            ['taskDue', 'due', 'Due'], ['taskCompleted', 'completed', 'Finished']];
+        let formKeptDates = {};
+        TASK_FORM_DATES.forEach(([inputId]) => {
+            const input = document.getElementById(inputId);
+            if (input) input.addEventListener('input', () => { delete formKeptDates[inputId]; });
+        });
 
         function taskFormState() {
             const v = {};
             TASK_FORM_FIELDS.forEach(id => { const el = document.getElementById(id); v[id] = el ? el.value : ''; });
             v.subtasks = formSubtasks;
+            v.keptDates = formKeptDates;
             return JSON.stringify(v);
         }
 
@@ -190,11 +210,12 @@
         function readTaskForm() {
             const val = id => document.getElementById(id).value;
             // Only outer blank lines are removed: indentation of the first line and trailing double
-            // spaces (Markdown line breaks) are content.
+            // spaces (Markdown line breaks) are content. A trailing "---" separator is dropped too,
+            // exactly as reading does (trimTrailingSeparators): kept, it would not read back as
+            // typed and the save was refused with a hard-to-understand reason.
             const trimBlankLines = (v) => {
-                const ls = String(v).replace(/\r\n?/g, '\n').split('\n');
+                const ls = trimTrailingSeparators(String(v).replace(/\r\n?/g, '\n').split('\n'));
                 while (ls.length && !ls[0].trim()) ls.shift();
-                while (ls.length && !ls[ls.length - 1].trim()) ls.pop();
                 return ls.join('\n');
             };
             const tagsInput = val('taskTags').trim();
@@ -211,10 +232,10 @@
                 // the tag marker, stored as one ASCII "#".
                 tags: tagsInput ? tagsInput.split(/[\s,、，]+/).map(x => x.replace(/^[#＃]+/, '')).filter(Boolean).map(x => '#' + x) : [],
                 assignees: assignee ? assignee.split(/[,、，]/).map(a => a.trim()).filter(Boolean) : [],
-                created: val('taskCreated'),
-                started: val('taskStarted'),
-                due: val('taskDue'),
-                completed: val('taskCompleted'),
+                created: val('taskCreated') || formKeptDates.taskCreated || '',
+                started: val('taskStarted') || formKeptDates.taskStarted || '',
+                due: val('taskDue') || formKeptDates.taskDue || '',
+                completed: val('taskCompleted') || formKeptDates.taskCompleted || '',
                 description: trimBlankLines(val('taskDescription')),
                 notes: trimBlankLines(val('taskNotes')),
                 subtasks: formSubtasks.map(st => ({ ...st }))
@@ -260,6 +281,7 @@
             document.getElementById('newTaskModal').classList.remove('active');
             document.getElementById('newTaskForm').reset();
             formSubtasks = [];
+            formKeptDates = {};
             isEditMode = false;
             editingTask = null;
             taskFormSnapshot = null;

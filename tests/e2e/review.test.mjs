@@ -667,3 +667,39 @@ describe('review round 6: text encoding', () => {
     assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-003 \| C edited/);
   });
 });
+
+describe('review round 6: form values that the inputs cannot show', () => {
+  it('a date the date input cannot show (not YYYY-MM-DD) is kept unless it is changed (round 6: review 2-3)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'A', '**Created**: 2026-1-5 | **Due**: 20261231'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    const shown = await notificationText(page);
+    await page.fill('#taskTitle', 'A2');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-001 \| A2\n\*\*Status\*\*: todo\n\*\*Created\*\*: 2026-1-5 \| \*\*Due\*\*: 20261231\n/);
+    assert.match(shown, /2026-1-5/, 'the form said which date it cannot show');
+    // A date the user picks replaces the kept value.
+    await page.click('.task-edit-btn');
+    await page.fill('#taskDue', '2026-12-31');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /\*\*Created\*\*: 2026-1-5 \| \*\*Due\*\*: 2026-12-31\n/);
+  });
+
+  it('a description / notes ending with "---" is saved (the separator is dropped like on reading) (round 6: review 2-5)', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'A'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#taskDescription', '説明\n---\n');
+    await page.fill('#taskNotes', 'メモ\n\n---');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.deepEqual(dialogs.seen, [], 'no refusal');
+    const md = await readFile(page, 'p', 'kanban.md');
+    assert.match(md, /### TASK-001 \| A\n\*\*Status\*\*: todo\n\n説明\n\n\*\*Notes\*\*:\nメモ\n/);
+    await page.evaluate(() => reloadFromDisk({ force: true }));
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => session.blocked.kanban), null, 'the saved file is not read-only');
+  });
+});
