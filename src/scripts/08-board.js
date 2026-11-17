@@ -14,8 +14,11 @@
             debugInfo.textContent = `Loaded ${tasks.length} tasks\nColumns: ${config.columns.map(c => c.name).join(', ')}`;
             // debugInfo.style.display = 'block'; // Uncomment to show debug info
 
-            config.columns.forEach(column => {
-                const columnTasks = tasks.filter(t => t.status === column.id && matchesFilters(t));
+            // A task whose **Status** matches no column (typo by hand / AI) is shown in the first
+            // column with a warning badge; its status is kept as written until it is moved.
+            const columnIds = new Set(config.columns.map(c => c.id));
+            config.columns.forEach((column, colIdx) => {
+                const columnTasks = tasks.filter(t => (t.status === column.id || (colIdx === 0 && !columnIds.has(t.status))) && matchesFilters(t));
                 console.log(`Column ${column.id}: ${columnTasks.length} tasks`);
 
                 const columnEl = document.createElement('div');
@@ -29,7 +32,7 @@
                         </div>
                         <div style="display: flex; align-items: center; gap: 0.5rem;">
                             <div class="column-count">${columnTasks.length}</div>
-                            <button class="column-add-btn">+</button>
+                            <button class="column-add-btn" aria-label="${escapeHtml(t('taskForm.newTask'))}">+</button>
                         </div>
                     </div>
                     <div class="task-list" ondrop="drop(event)" ondragover="allowDrop(event)">
@@ -77,6 +80,7 @@
 
         // Create task element
         function createTaskElement(task) {
+            const columnIds = new Set(config.columns.map(c => c.id));
             const taskEl = document.createElement('div');
             taskEl.className = 'task-card';
             taskEl.draggable = true;
@@ -88,7 +92,7 @@
 
             var priorityBadgeClass = "Default";
             if (config.priorities) {
-                const priority = config.priorities.find(p => clean(p) === task.priority);
+                const priority = findPriorityLabel(config.priorities, task.priority);
                 if (priority) {
                     const emoji = getFirstEmoji(priority);
                     if (emoji && priorityIconClasses[emoji]) {
@@ -110,8 +114,9 @@
             taskEl.innerHTML = `
                 <div class="task-header">
                     <span class="task-id">${escapeHtml(task.id)}</span>
-                    <button class="task-edit-btn" data-edit-task="1" style="background: none; border: none; cursor: pointer; font-size: 1.1rem; padding: 0.25rem;">✏️</button>
+                    <button class="task-edit-btn" data-edit-task="1" title="${escapeHtml(t('taskDetail.edit'))}" aria-label="${escapeHtml(t('taskDetail.edit'))}" style="background: none; border: none; cursor: pointer; font-size: 1.1rem; padding: 0.25rem;">✏️</button>
                 </div>
+                ${!columnIds.has(task.status) ? `<div class="badge badge-unknown-status" title="${escapeHtml(t('tooltip.unknownStatus'))}">⚠️ ${escapeHtml(t('board.unknownStatus', { status: task.status }))}</div>` : ''}
                 <div class="task-title">${escapeHtml(task.title)}</div>
                 ${task.description ? `<div class="task-description">${markdownToHtml(task.description)}</div>` : ''}
                 <div class="task-meta">
@@ -187,7 +192,7 @@
             }
             tasks.splice(insertIdx, 0, task);
             const posChanged = tasks.indexOf(task) !== oldIdx;
-            if (newStatus) task.status = newStatus;
+            if (newStatus) { task.status = newStatus; delete task.statusUnknown; }
             return statusChanged || posChanged;
         }
 
@@ -208,11 +213,11 @@
             const draggedEl = document.querySelector(`[data-task-id="${taskId}"]`);
             if (draggedEl) draggedEl.classList.remove('dragging');
 
+            if (!guardWritable()) return;
             // moveTask handles both cross-column moves and within-column reordering
             if (moveTask(taskId, newStatus, beforeId)) {
                 renderKanban();
-                autoSave();
-                showNotification(t('notif.taskMoved'), 'success');
+                persistKanban(t('notif.taskMoved'));
             }
         }
 
@@ -271,10 +276,9 @@
                         const newStatus = col.dataset.columnId;
                         const taskList = col.querySelector('.task-list');
                         const beforeId = getDropBeforeId(taskList, tch.clientY, touchDrag.taskId);
-                        if (moveTask(touchDrag.taskId, newStatus, beforeId)) {
+                        if (guardWritable() && moveTask(touchDrag.taskId, newStatus, beforeId)) {
                             renderKanban();
-                            autoSave();
-                            showNotification(t('notif.taskMoved'), 'success');
+                            persistKanban(t('notif.taskMoved'));
                         }
                     }
                 }

@@ -23,7 +23,7 @@
             // Get priority with translation
             let priorityWithIcon = task.priority;
             if (task.priority) {
-                const priority = config.priorities.find(p => clean(p) === task.priority);
+                const priority = findPriorityLabel(config.priorities, task.priority);
                 if (priority) {
                     priorityWithIcon = displayPriority(priority);
                 }
@@ -37,7 +37,7 @@
                 <div style="padding: 1.5rem;">
                     <!-- Task ID Badge -->
                     <div style="display: inline-block; background: var(--primary); color: white; padding: 0.25rem 0.75rem; border-radius: 4px; font-size: 0.85rem; font-weight: 600; margin-bottom: 1rem;">
-                        ${task.id}
+                        ${escapeHtml(task.id)}
                     </div>
 
                     <!-- Title -->
@@ -48,7 +48,7 @@
                         ${task.priority ? `
                             <div>
                                 <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.25rem;">${t('meta.priority')}</div>
-                                <div style="font-weight: 500;">${displayPriority(priorityWithIcon)}</div>
+                                <div style="font-weight: 500;">${escapeHtml(displayPriority(priorityWithIcon))}</div>
                             </div>
                         ` : ''}
 
@@ -107,7 +107,7 @@
                             <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                                 ${task.tags.map(tag => `
                                     <span style="background: var(--primary); color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.85rem;">
-                                        ${tag}
+                                        ${escapeHtml(tag)}
                                     </span>
                                 `).join('')}
                             </div>
@@ -130,16 +130,16 @@
                                 const escapedText = st.text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
                                 return `
                                 <li style="padding: 0.5rem; margin-bottom: 0.25rem; background: var(--bg); border-radius: 4px; display: flex; align-items: center; gap: 0.5rem;">
-                                    <input type="checkbox" ${st.completed ? 'checked' : ''} onchange="toggleSubtask('${task.id}', ${idx})" style="width: 18px; height: 18px; cursor: pointer;">
+                                    <input type="checkbox" ${st.completed ? 'checked' : ''} ${wasArchiveModalActive ? 'disabled' : ''} onchange="toggleSubtask('${task.id}', ${idx})" aria-label="${escapeHtml(st.text)}" style="width: 18px; height: 18px; cursor: pointer;">
                                     <span ondblclick="editSubtask('${task.id}', ${idx})" style="flex: 1; ${st.completed ? 'text-decoration: line-through; color: var(--text-secondary);' : ''} cursor: pointer;" title="${t('tooltip.doubleClickEdit')}">${escapedText}</span>
-                                    <button onclick="deleteSubtask('${task.id}', ${idx})" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1.1rem; padding: 0.25rem;" title="${t('tooltip.delete')}">🗑️</button>
+                                    <button onclick="deleteSubtask('${task.id}', ${idx})" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1.1rem; padding: 0.25rem;" title="${t('tooltip.delete')}" aria-label="${t('tooltip.delete')}">🗑️</button>
                                 </li>
                                 `;
                             }).join('')}
                         </ul>
                         ${!wasArchiveModalActive ? `
                         <div style="display: flex; gap: 0.5rem;">
-                            <input type="text" id="newSubtaskInput" placeholder="${t('subtask.newPlaceholder')}" onkeypress="if(event.key==='Enter') addSubtask('${task.id}')" style="flex: 1; padding: 0.5rem; border: 2px solid var(--border, #cbd5e0); border-radius: 4px; font-size: 0.9rem; background: var(--bg); color: var(--text);">
+                            <input type="text" id="newSubtaskInput" placeholder="${t('subtask.newPlaceholder')}" aria-label="${t('subtask.newPlaceholder')}" onkeypress="if(event.key==='Enter') addSubtask('${task.id}')" style="flex: 1; padding: 0.5rem; border: 2px solid var(--border, #cbd5e0); border-radius: 4px; font-size: 0.9rem; background: var(--bg); color: var(--text);">
                             <button onclick="addSubtask('${task.id}')" class="btn btn-primary" style="padding: 0.5rem 1rem;">${t('taskForm.subtaskAdd')}</button>
                         </div>
                         ` : ''}
@@ -178,23 +178,24 @@
         // Subtask management
         function toggleSubtask(taskId, subtaskIdx) {
             const task = tasks.find(t => t.id === taskId);
-            if (task && task.subtasks[subtaskIdx]) {
-                task.subtasks[subtaskIdx].completed = !task.subtasks[subtaskIdx].completed;
-                currentDetailTask = task; // Update reference
-                showTaskDetail(task); // Refresh display
-                renderKanban(); // Update card progress
-                autoSave();
-            }
+            if (!task || !task.subtasks[subtaskIdx]) return;
+            if (!guardWritable()) { showTaskDetail(task); return; }
+            task.subtasks[subtaskIdx].completed = !task.subtasks[subtaskIdx].completed;
+            currentDetailTask = task; // Update reference
+            showTaskDetail(task); // Refresh display
+            renderKanban(); // Update card progress
+            persistKanban();
         }
 
         function deleteSubtask(taskId, subtaskIdx) {
             const task = tasks.find(t => t.id === taskId);
-            if (task && confirm(t('confirm.deleteSubtask'))) {
+            if (!task || !guardWritable()) return;
+            if (confirm(t('confirm.deleteSubtask'))) {
                 task.subtasks.splice(subtaskIdx, 1);
                 currentDetailTask = task;
                 showTaskDetail(task);
                 renderKanban();
-                autoSave();
+                persistKanban();
             }
         }
 
@@ -204,33 +205,36 @@
             if (!text) return;
 
             const task = tasks.find(t => t.id === taskId);
-            if (task) {
+            if (task && guardWritable()) {
+                if (/\n/.test(text)) return;
                 task.subtasks.push({ completed: false, text });
                 currentDetailTask = task;
                 input.value = '';
                 showTaskDetail(task);
                 renderKanban();
-                autoSave();
+                persistKanban();
             }
         }
 
         function editSubtask(taskId, subtaskIdx) {
             const task = tasks.find(t => t.id === taskId);
             if (!task || !task.subtasks[subtaskIdx]) return;
+            if (!guardWritable()) return;
 
             const newText = prompt(t('prompt.editSubtask'), task.subtasks[subtaskIdx].text);
             if (newText !== null && newText.trim()) {
-                task.subtasks[subtaskIdx].text = newText.trim();
+                task.subtasks[subtaskIdx].text = newText.trim().replace(/\s*\n\s*/g, ' ');
                 currentDetailTask = task;
                 showTaskDetail(task);
                 renderKanban();
-                autoSave();
+                persistKanban();
             }
         }
 
         // Handle task form submission (create or edit)
         document.getElementById('newTaskForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (!guardWritable()) return;
 
             // Get form values
             const title = document.getElementById('taskTitle').value.trim();
@@ -246,10 +250,20 @@
             const description = document.getElementById('taskDescription').value.trim();
             const notes = document.getElementById('taskNotes').value.trim();
 
-            // Parse tags and assignees
-            const tags = tagsInput ? tagsInput.split(/\s+/).filter(t => t.startsWith('#') || t).map(t => t.startsWith('#') ? t : '#' + t) : [];
-            const assignees = assignee ? assignee.split(',').map(a => a.trim()) : [];
+            // A line that looks like a task header or a top-level section would split the task (or
+            // the file) on the next read. Refuse it instead of writing a file that reads back wrong.
+            const badLine = [description, notes, ...formSubtasks.map(st => st.text)]
+                .join('\n').split('\n').find(l => /^\s*#{2,3}\s+TASK-/i.test(l) || /^\s*##\s+Tasks\s*$/i.test(l));
+            if (badLine) {
+                alert(t('alert.forbiddenHeading', { line: badLine.trim() }));
+                return;
+            }
 
+            // Parse tags and assignees. Tags: whitespace/comma separated, "#" added if missing.
+            const tags = tagsInput ? tagsInput.split(/[\s,、]+/).filter(Boolean).map(t => t.startsWith('#') ? t : '#' + t).filter(t => t.length > 1) : [];
+            const assignees = assignee ? assignee.split(/[,、]/).map(a => a.trim()).filter(Boolean) : [];
+
+            let successMessage = '';
             if (isEditMode) {
                 // Edit existing task
                 const taskId = document.getElementById('taskEditId').value;
@@ -268,12 +282,14 @@
                     task.description = description;
                     task.subtasks = formSubtasks;
                     task.notes = notes;
-                    showNotification(t('notif.taskEdited', {id: taskId}), 'success');
+                    delete task.statusUnknown;
+                    successMessage = t('notif.taskEdited', {id: taskId});
                 }
             } else {
-                // Create new task
-                config.lastTaskId++;
-                const newTaskId = 'TASK-' + String(config.lastTaskId).padStart(3, '0');
+                // Create new task. The id is above the config counter AND every id already used in
+                // kanban.md or archive.md (an AI may have added tasks without bumping the counter).
+                config.lastTaskId = nextTaskNumber(config.lastTaskId, tasks, archivedTasks);
+                const newTaskId = formatTaskId(config.lastTaskId);
                 tasks.push({
                     id: newTaskId,
                     title,
@@ -282,20 +298,21 @@
                     category,
                     assignees,
                     tags,
-                    created: created || new Date().toISOString().split('T')[0],
+                    created: created || localDateString(),
                     started: started || '',
                     due,
                     completed: completed || '',
                     description,
                     subtasks: formSubtasks,
-                    notes
+                    notes,
+                    extra: ''
                 });
-                showNotification(t('notif.taskCreated', {id: newTaskId}), 'success');
+                successMessage = t('notif.taskCreated', {id: newTaskId});
             }
 
             closeTaskModal();
             renderKanban();
-            autoSave();
+            await persistKanban(successMessage);
         });
 
         // Archive functions

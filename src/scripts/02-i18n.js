@@ -174,12 +174,89 @@
                 'markdown.configPriorities': '**Priorities**:',
                 'markdown.configTags': '**Tags**:',
 
+                // Safe save / sync (fork additions)
+                'header.reload': 'Reload from disk / check for external changes',
+                'header.languageLabel': 'Language',
+                'header.projectLabel': 'Project',
+                'header.themeToggle': 'Toggle dark mode',
+                'header.buildInfo': 'Build {version} (source {hash})',
+                'modal.close': 'Close',
+                'filters.removeFilter': 'Remove this filter',
+                'filters.searchClearLabel': 'Clear search',
+                'archives.noMatch': 'No archived task matches the search',
+                'columns.nameLabel': 'Column name (display)',
+                'columns.idLabel': 'ID',
+                'columns.idHelp': 'Column id stored in **Status** (changing it moves the tasks of this column)',
+                'tooltip.deletePermanently': 'Delete permanently',
+                'tooltip.unknownStatus': 'This **Status** matches no column. Move the task to a column to fix it.',
+                'board.unknownStatus': 'Unknown status: {status}',
+                'notif.loadError': 'Could not read kanban.md (permission or read error). Nothing was changed.',
+                'notif.readOnly': 'kanban.md is read-only in this app until the reported problem is fixed in the file.',
+                'notif.conflictNoEdit': 'Saving is stopped because of a conflict. Export your changes or reload from disk first.',
+                'notif.busy': 'Another operation is still running. Please wait.',
+                'notif.reloaded': 'Reloaded from disk',
+                'notif.reloadedExternal': 'Changes made outside this page were loaded',
+                'notif.noExternalChange': 'No external changes on disk',
+                'notif.saved': 'Saved',
+                'notif.archiveUnreadable': 'archive.md could not be read. Archive and restore are disabled until it can be read (reload).',
+                'notif.archiveReadOnly': 'archive.md contains content this app cannot keep. Archive and restore are disabled.',
+                'notif.duplicateDifferent': '{id} already exists in {file} with different content. Nothing was changed — please check both copies.',
+                'notif.archiveFailed': '{id} could not be written to archive.md. It stays on the board.',
+                'notif.archivePartial': '{id} was saved to archive.md, but kanban.md could not be updated: the task is now in BOTH files. Run "Archive" again (no duplicate is created) or reload and check.',
+                'notif.restoreFailed': '{id} could not be written to kanban.md. It stays in the archive.',
+                'notif.restorePartial': '{id} was added to kanban.md, but archive.md could not be updated: the task is now in BOTH files. Run "Restore" again (no duplicate is created) or reload and check.',
+                'confirm.reloadDiscard': 'Reload from disk?\n\nYour unsaved changes in this page will be DISCARDED.\nUse "Download unsaved" or "Copy" first if you need them.',
+                'confirm.initFolder': 'The folder "{name}" has no kanban.md.\n\nCreate a new board (kanban.md and archive.md) in this folder?\n\nCancel if you picked the wrong folder (e.g. the folder that only contains task-manager.html).',
+                'confirm.leaveUnsaved': 'This project has unsaved changes (or a conflict).\n\nLeave it and discard them?\nCancel to stay and export them first.',
+                'alert.forbiddenHeading': 'This line would break the Markdown file and was not saved:\n\n{line}\n\nLines starting with "### TASK-" or "## Tasks" are not allowed inside a task.',
+                'alert.invalidColumnId': 'Invalid column id: it must be non-empty, unique and must not contain | ( or ).',
+                'alert.lastColumn': 'The last column cannot be deleted.',
+                'alert.columnNotEmpty': 'This column still contains {count} task(s). Move them to another column first.',
+                'sync.bannerLabel': 'Save status',
+                'sync.saveFailedShort': 'Not saved: {file}',
+                'sync.downloaded': 'Downloaded {name}',
+                'sync.copied': 'Unsaved board copied to the clipboard',
+                'sync.copyFailed': 'Copy failed — use "Download unsaved" instead',
+                'sync.statusReadOnly': '🔒 Read-only',
+                'sync.statusConflict': '⚠️ Conflict',
+                'sync.statusSaving': '⏳ Saving…',
+                'sync.statusError': '❌ Not saved',
+                'sync.statusUnsaved': '● Unsaved',
+                'sync.statusSaved': '✓ Saved',
+                'sync.blockedKanban': 'kanban.md contains content that this app would lose on save. Saving is disabled for this file. Fix the file (by hand or with your AI assistant), then reload.',
+                'sync.blockedArchive': 'archive.md cannot be used safely (see below). Archive and restore are disabled until it is fixed and reloaded.',
+                'sync.conflict.conflict': '{file} was changed outside this page since it was loaded. Automatic saving is stopped so the other change is not overwritten.',
+                'sync.conflict.missing': '{file} is missing on disk (deleted, moved or not synced). Nothing was written.',
+                'sync.conflict.appeared': '{file} was created by another program since it was loaded. Nothing was written.',
+                'sync.conflict.uncertain': 'The result of writing {file} could not be confirmed. Check the file and reload.',
+                'sync.conflictHelp': 'Your changes are still in this page. Download or copy them if you need them, then "Reload from disk" (this discards the page\'s unsaved changes) and re-apply what is missing.',
+                'sync.error.read-failed': '{file} could not be read (permission or access error). Nothing was written.',
+                'sync.error.write-failed': 'Writing {file} failed. The file on disk was not changed.',
+                'sync.error.verify-failed': '{file} did not contain the expected content after saving.',
+                'sync.error.blocked': '{file} is read-only in this app.',
+                'sync.errorUnsavedHelp': 'Your changes are kept in this page. Retry, or download / copy them.',
+                'sync.retry': '🔁 Retry',
+                'sync.download': '⬇️ Download unsaved',
+                'sync.copy': '📋 Copy',
+                'sync.reload': '🔄 Reload from disk',
+                'integrity.lossy-task': '{id}: these lines would be lost on save:',
+                'integrity.malformed-task-header': 'Malformed task header(s) (expected "### TASK-123 | Title"):',
+                'integrity.unknown-header-content': 'Unknown lines in the header/configuration part:',
+                'integrity.text-outside-task': 'Text outside any task{where}:',
+                'integrity.task-not-in-column': 'Task(s) in a section that is not a configured column:',
+                'integrity.unknown-section': 'Section "{section}" is not a configured column:',
+                'integrity.read-failed': 'archive.md could not be read.',
+                'integrity.duplicate-id': 'Duplicate task id(s): {ids}',
+                'integrity.unknown-status': 'Task(s) with a **Status** that matches no column (shown in the first column):',
+                'locale.dates': 'en-US',
+
                 // Language selector
                 'language.label': 'Language:',
                 'language.en': 'English',
                 'language.fr': 'Français',
                 'language.de': 'Deutsch',
-                'language.zh_cn': '简体中文'
+                'language.zh_cn': '简体中文',
+                'language.ja': '日本語'
             },
             fr: {
                 // Page title
@@ -358,7 +435,9 @@
                 'language.en': 'English',
                 'language.fr': 'Français',
                 'language.de': 'Deutsch',
-                'language.zh_cn': '简体中文'
+                'language.zh_cn': '简体中文',
+                'language.ja': '日本語',
+                'locale.dates': 'fr-FR'
             },
             de: {
                 // Page title
@@ -536,7 +615,9 @@
                 'language.label': 'Sprache:',
                 'language.en': 'English',
                 'language.fr': 'Français',
-                'language.de': 'Deutsch'
+                'language.de': 'Deutsch',
+                'language.ja': '日本語',
+                'locale.dates': 'de-DE'
             },
             zh_cn: {
                 // Page title
@@ -714,7 +795,9 @@
                 'language.label': '语言:',
                 'language.en': 'English',
                 'language.fr': 'Français',
-                'language.zh_cn': '简体中文'
+                'language.zh_cn': '简体中文',
+                'language.ja': '日本語',
+                'locale.dates': 'zh-CN'
             }
         };
 
@@ -784,24 +867,6 @@
             return text;
         }
 
-        // Clean function
-        function clean(text) {
-            // Remove any non-alphanumeric characters (emojis, symbols, etc.)
-            return text.replace(/[^\w\s]+/, '').trim();
-        }
-
-        // Get first emoji from text
-        function getFirstEmoji(text) {
-            const matches = text.match(/[^\w\s]+/);
-            if (!matches) {
-                return '';
-            }
-
-            // Take matched emojis, expand to array, take first element
-            // This method is required to handle double byte characters
-            return [...matches[0]][0] || '';
-        }
-
         // Translate priority default values
         function displayPriority(priority) {
             if (!priority || currentLanguage === 'en') return priority;
@@ -841,8 +906,39 @@
             document.getElementById('archiveBtn').innerHTML = t('header.archives');
             document.getElementById('manageColsBtn').innerHTML = t('header.columns');
 
+            // Accessible names / tooltips of icon-only controls
+            const setLabel = (id, key) => {
+                const el = document.getElementById(id);
+                if (el) { el.title = t(key); el.setAttribute('aria-label', t(key)); }
+            };
+            setLabel('renameProjectBtn', 'header.renameProject');
+            setLabel('deleteProjectBtn', 'header.deleteProject');
+            setLabel('themeToggleBtn', 'header.themeToggle');
+            setLabel('reloadBtn', 'header.reload');
+            setLabel('languageSelector', 'header.languageLabel');
+            setLabel('projectSelector', 'header.projectLabel');
+            setLabel('clearGlobalSearch', 'filters.searchClearLabel');
+            document.querySelectorAll('.close-btn').forEach(b => { b.title = t('modal.close'); b.setAttribute('aria-label', t('modal.close')); });
+            const gs = document.getElementById('globalSearchInput');
+            if (gs) gs.setAttribute('aria-label', t('filters.search'));
+            const as = document.getElementById('archiveSearch');
+            if (as) as.setAttribute('aria-label', t('archives.search'));
+            ['filterTagSelect', 'filterCategorySelect', 'filterUserSelect', 'filterPrioritySelect'].forEach((id, i) => {
+                const el = document.getElementById(id);
+                if (el) el.setAttribute('aria-label', t(['filters.tags', 'filters.category', 'filters.user', 'filters.priority'][i]).replace(/[:：]\s*$/, ''));
+            });
+            const banner = document.getElementById('syncBanner');
+            if (banner) banner.setAttribute('aria-label', t('sync.bannerLabel'));
+            [['syncRetryBtn', 'sync.retry'], ['syncDownloadBtn', 'sync.download'], ['syncCopyBtn', 'sync.copy'], ['syncReloadBtn', 'sync.reload']].forEach(([id, key]) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = t(key);
+            });
+            const title = document.getElementById('headerTitle');
+            if (title && typeof BUILD_INFO !== 'undefined') title.title = t('header.buildInfo', { version: BUILD_INFO.version, hash: BUILD_INFO.sourceHash });
+
             // Update language selector to match current language
             document.getElementById('languageSelector').value = currentLanguage;
+            document.documentElement.lang = t('locale.dates').split('-')[0] === 'zh' ? 'zh-CN' : t('locale.dates').split('-')[0];
 
             // Update welcome screen
             renderWelcomeScreen();
@@ -1040,10 +1136,14 @@
             // Update filter dropdowns (including priorities)
             updateAutocomplete();
 
-            // Re-render the interface
+            // Re-render the interface (display only: task data and column names are not touched)
             renderKanban();
             updateProjectSelector();
             renderArchivesModal();
+            renderSyncBanner();
+            if (document.getElementById('archiveModal').classList.contains('active')) {
+                renderArchiveList(document.getElementById('archiveSearch').value);
+            }
 
             console.log(`Language changed to: ${lang}`);
         }
@@ -1052,20 +1152,19 @@
         function initLanguage() {
             // Check for saved preference first
             const savedLang = localStorage.getItem('preferredLanguage');
-            if (savedLang) {
+            if (savedLang && translations[savedLang]) {
                 currentLanguage = savedLang;
                 return;
             }
 
-            // Detect browser language
-            const browserLang = navigator.language || navigator.userLanguage;
-            const langCode = browserLang.toLowerCase().split('-')[0]; // e.g., "en-US" -> "en"
-
-            // Check if we support this language, otherwise fallback to English
-            if (translations[langCode]) {
-                currentLanguage = langCode;
-            } else {
-                currentLanguage = 'en'; // Default fallback
+            // Detect browser language (first supported entry of navigator.languages)
+            const candidates = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || navigator.userLanguage || 'en']);
+            currentLanguage = 'en'; // Default fallback
+            for (const browserLang of candidates) {
+                const lower = String(browserLang).toLowerCase();
+                const langCode = lower.split('-')[0]; // e.g., "ja-JP" -> "ja"
+                if (lower.startsWith('zh') && translations.zh_cn) { currentLanguage = 'zh_cn'; break; }
+                if (translations[langCode]) { currentLanguage = langCode; break; }
             }
 
             // Save the detected/default language

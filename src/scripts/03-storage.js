@@ -28,8 +28,9 @@
                 // Get project name (directory name)
                 const projectName = handle.name;
 
-                // Check if project already exists
-                const existingIndex = projects.findIndex(p => p.name === projectName);
+                // Check if project already exists. Identity = the same folder (isSameEntry), not just
+                // the same folder NAME: two different folders called "data" must stay two projects.
+                const existingIndex = await findProjectIndex(projects, handle);
                 const isNewProject = existingIndex < 0;
 
                 // Ask for custom name for new projects if not provided
@@ -100,6 +101,24 @@
             }
         }
 
+        async function findProjectIndex(projects, handle) {
+            for (let i = 0; i < projects.length; i++) {
+                const h = projects[i].handle;
+                try {
+                    if (h && typeof h.isSameEntry === 'function') {
+                        if (await h.isSameEntry(handle)) return i;
+                        continue;
+                    }
+                } catch (e) { /* fall back to the name */ }
+                if (projects[i].name === handle.name) return i;
+            }
+            return -1;
+        }
+
+        function localeForDates() {
+            return t('locale.dates') || 'en-US';
+        }
+
         async function verifyPermission(handle) {
             const options = { mode: 'readwrite' };
             if ((await handle.queryPermission(options)) === 'granted') {
@@ -122,8 +141,8 @@
                 selector.style.display = 'block';
 
                 // Only mark as selected if kanban is actually loaded
-                const isKanbanLoaded = document.getElementById('kanbanView').style.display !== 'none';
-                const currentProject = (isKanbanLoaded && directoryHandle) ? directoryHandle.name : '';
+                const isKanbanLoaded = document.getElementById('kanbanView').style.display !== 'none' && !!session;
+                const currentIdx = (isKanbanLoaded && directoryHandle) ? await findProjectIndex(projects, directoryHandle) : -1;
 
                 // Show/hide rename and delete buttons
                 if (isKanbanLoaded) {
@@ -141,11 +160,11 @@
                 }
 
                 html += projects.map((p, idx) => {
-                    const selected = (isKanbanLoaded && p.name === currentProject) ? 'selected' : '';
-                    const date = new Date(p.lastAccessed).toLocaleDateString('fr-FR');
+                    const selected = idx === currentIdx ? 'selected' : '';
+                    const date = new Date(p.lastAccessed).toLocaleDateString(localeForDates());
                     const displayName = p.customName || p.name;
                     const details = p.customName ? ` (📁 ${p.name})` : '';
-                    return `<option value="${idx}" ${selected}>${displayName}${details} - ${date}</option>`;
+                    return `<option value="${idx}" ${selected}>${escapeHtml(displayName + details)} - ${escapeHtml(date)}</option>`;
                 }).join('');
 
                 selector.innerHTML = html;
@@ -156,38 +175,25 @@
             }
         }
 
-        // Switch to a different project
+        // Switch to a different project. Unsaved edits → confirmation; running saves finish first
+        // (against the OLD project's files); then a brand-new session is opened for the new folder.
         async function switchProject(projectIndex) {
             try {
                 const projects = await loadRecentProjects();
-                if (projectIndex >= 0 && projectIndex < projects.length) {
-                    const project = projects[projectIndex];
-
-                    // Verify permission
-                    if (await verifyPermission(project.handle)) {
-                        directoryHandle = project.handle;
-
-                        // Update last accessed time and save
-                        await saveDirectoryHandle(directoryHandle);
-
-                        // Load the project
-                        await loadKanbanFile();
-
-                        document.getElementById('welcomeScreen').style.display = 'none';
-                        document.getElementById('kanbanView').style.display = 'block';
-                        document.getElementById('filterBar').style.display = 'block';
-                        document.getElementById('newTaskBtn').style.display = 'inline-flex';
-                        document.getElementById('archiveBtn').style.display = 'inline-flex';
-                        document.getElementById('manageColsBtn').style.display = 'inline-flex';
-
-                        // Update project selector now that kanban is visible
-                        await updateProjectSelector();
-
-                        showNotification(t('notif.projectLoaded', {name: project.customName || project.name}), 'success');
-                    } else {
-                        showNotification(t('notif.permissionDenied'), 'error');
-                    }
+                if (projectIndex < 0 || projectIndex >= projects.length) return;
+                const project = projects[projectIndex];
+                if (!(await confirmLeaveCurrent())) { await updateProjectSelector(); return; }
+                if (!(await verifyPermission(project.handle))) {
+                    showNotification(t('notif.permissionDenied'), 'error');
+                    await updateProjectSelector();
+                    return;
                 }
+                const ok = await openProject(project.handle, { skipLeaveCheck: true });
+                if (ok) {
+                    await saveDirectoryHandle(project.handle);
+                    showNotification(t('notif.projectLoaded', {name: project.customName || project.name}), 'success');
+                }
+                await updateProjectSelector();
             } catch (error) {
                 console.error('Error switching project:', error);
                 showNotification(t('notif.projectError'), 'error');
@@ -200,7 +206,8 @@
 
             try {
                 const projects = await loadRecentProjects();
-                const currentProject = projects.find(p => p.name === directoryHandle.name);
+                const currentIdx = await findProjectIndex(projects, directoryHandle);
+                const currentProject = currentIdx >= 0 ? projects[currentIdx] : null;
 
                 if (currentProject) {
                     const currentName = currentProject.customName || currentProject.name;
@@ -223,14 +230,16 @@
 
             try {
                 const projects = await loadRecentProjects();
-                const currentProject = projects.find(p => p.name === directoryHandle.name);
+                const currentIdx = await findProjectIndex(projects, directoryHandle);
+                const currentProject = currentIdx >= 0 ? projects[currentIdx] : null;
 
                 if (currentProject) {
                     const displayName = currentProject.customName || currentProject.name;
 
+                    if (!(await confirmLeaveCurrent())) return;
                     if (confirm(t('confirm.deleteProject', {name: displayName}))) {
                         // Remove from projects list
-                        const updatedProjects = projects.filter(p => p.name !== directoryHandle.name);
+                        const updatedProjects = projects.filter(p => p !== currentProject);
 
                         // Save updated list to IndexedDB
                         const db = await openDB();
@@ -243,17 +252,15 @@
                             transaction.onerror = () => reject(transaction.error);
                         });
 
-                        // Clear current project and show welcome screen
+                        // Clear current project (new generation → late async work is ignored)
+                        projectGen++;
+                        session = null;
                         directoryHandle = null;
-                        kanbanFileHandle = null;
                         tasks = [];
-
-                        document.getElementById('kanbanView').style.display = 'none';
-                        document.getElementById('filterBar').style.display = 'none';
-                        document.getElementById('newTaskBtn').style.display = 'none';
-                        document.getElementById('archiveBtn').style.display = 'none';
-                        document.getElementById('manageColsBtn').style.display = 'none';
-                        document.getElementById('welcomeScreen').style.display = 'block';
+                        archivedTasks = [];
+                        closeAllModals();
+                        showBoardViews(false);
+                        renderSyncBanner();
 
                         await updateProjectSelector();
                         showNotification(t('notif.projectDeleted'), 'success');
@@ -275,21 +282,14 @@
                     // Verify we still have permission
                     console.log('Verifying permissions...');
                     if (await verifyPermission(savedHandle)) {
-                        console.log('Permission granted, loading kanban file...');
-                        directoryHandle = savedHandle;
-                        await loadKanbanFile();
-
-                        document.getElementById('welcomeScreen').style.display = 'none';
-                        document.getElementById('kanbanView').style.display = 'block';
-                        document.getElementById('filterBar').style.display = 'block';
-                        document.getElementById('newTaskBtn').style.display = 'inline-flex';
-                        document.getElementById('archiveBtn').style.display = 'inline-flex';
-                        document.getElementById('manageColsBtn').style.display = 'inline-flex';
-
-                        showNotification(t('notif.projectRestored'), 'success');
+                        // Always a fresh read from disk: edits an AI made while the browser was
+                        // closed are simply what gets loaded.
+                        const ok = await openProject(savedHandle, { skipLeaveCheck: true });
                         await updateProjectSelector(); // Show project selector
-                        console.log('Project restored successfully');
-                        return true;
+                        if (ok) {
+                            showNotification(t('notif.projectRestored'), 'success');
+                            return true;
+                        }
                     } else {
                         console.log('Permission denied or cancelled');
                     }
@@ -324,21 +324,15 @@
                     options.startIn = directoryHandle;
                 }
 
-                directoryHandle = await window.showDirectoryPicker(options);
-                await saveDirectoryHandle(directoryHandle); // Save for next time
-                await loadKanbanFile();
-
-                document.getElementById('welcomeScreen').style.display = 'none';
-                document.getElementById('kanbanView').style.display = 'block';
-                document.getElementById('filterBar').style.display = 'block';
-                document.getElementById('newTaskBtn').style.display = 'inline-flex';
-                document.getElementById('archiveBtn').style.display = 'inline-flex';
-                document.getElementById('manageColsBtn').style.display = 'inline-flex';
+                const picked = await window.showDirectoryPicker({ ...options, mode: 'readwrite' });
+                if (!(await confirmLeaveCurrent())) return;
+                const ok = await openProject(picked, { skipLeaveCheck: true });
+                if (ok) await saveDirectoryHandle(picked); // Save for next time
 
                 // Update project selector now that kanban is visible
                 await updateProjectSelector();
 
-                showNotification(t('notif.folderLoaded'), 'success');
+                if (ok) showNotification(t('notif.folderLoaded'), 'success');
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     showNotification(t('notif.folderError'), 'error');
@@ -347,4 +341,4 @@
             }
         });
 
-        // Load kanban.md file
+
