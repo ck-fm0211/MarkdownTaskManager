@@ -17,5 +17,7 @@ if (groups.includes('tests/e2e') && !existsSync(join(root, 'task-manager.html'))
   console.error('task-manager.html がありません。先に npm run build を実行してください。');
   process.exit(1);
 }
-const r = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], { cwd: root, stdio: 'inherit' });
+// test:e2e explicitly asks for browser tests → a missing browser fails instead of skipping.
+const env = which === 'e2e' ? { ...process.env, MTM_REQUIRE_BROWSER: '1' } : process.env;
+const r = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...files], { cwd: root, stdio: 'inherit', env });
 process.exit(r.status ?? 1);

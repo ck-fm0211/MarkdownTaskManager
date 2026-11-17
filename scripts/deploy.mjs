@@ -77,12 +77,17 @@ if (dataInApp.length && !allowDataDir) {
   fail(`配備先に運用データ（${dataInApp.join(', ')}）があります。運用アプリ（B）と運用データ（C）を分けてください。\n（このまま配備する場合は --allow-data-dir。データファイルには触れません）`);
 }
 
-// 3. Backup location for the previous HTML.
-const htmlBackupDir = cfg.backupDir ? join(cfg.backupDir, 'html') : join(cfg.appDir, 'previous-html');
-if (!cfg.backupDir) console.warn(`[注意] backupDir が未設定のため、旧 HTML は ${htmlBackupDir} に退避します。`);
+// 3. Backup location for the previous HTML (backup folder D — never inside the app folder).
+const targetExists = existsSync(target);
+if (targetExists && !cfg.backupDir) {
+  fail(`既存の ${HTML} を退避する先がありません。\n${howToConfigure('backupDir')}`, 2);
+}
+const htmlBackupDir = cfg.backupDir ? join(cfg.backupDir, 'html') : null;
+if (htmlBackupDir && (samePath(htmlBackupDir, cfg.appDir) || isInside(htmlBackupDir, cfg.appDir))) {
+  fail('backupDir が運用アプリフォルダー内です。別のフォルダーにしてください。');
+}
 
 let backupPath = null;
-const targetExists = existsSync(target);
 if (targetExists) {
   const old = readFileSync(target);
   if (Buffer.compare(old, srcBuf) === 0) {

@@ -54,12 +54,14 @@ for (const f of manifest.files) {
 console.log(`検証  : manifest の ${manifest.files.length} ファイルの SHA-256 一致`);
 
 const isWin = process.platform === 'win32';
-const run = (cmd, a) => spawnSync(cmd, a, { cwd: dest, encoding: 'utf8', shell: isWin, env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
+// npm is npm.cmd on Windows and needs a shell; Node itself must NOT go through a shell
+// (C:\Program Files\nodejs\node.exe contains a space and would be split).
+const run = (cmd, a, viaShell = false) => spawnSync(cmd, a, { cwd: dest, encoding: 'utf8', shell: viaShell, env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
 
 if (!args.includes('--skip-install')) {
   const ciArgs = ['ci', '--no-audit', '--no-fund', args.includes('--offline') ? '--offline' : '--prefer-offline'];
   console.log(`実行  : npm ${ciArgs.join(' ')}`);
-  const r = run(isWin ? 'npm.cmd' : 'npm', ciArgs);
+  const r = run(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
   if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${(r.stdout + r.stderr).trim().split('\n').slice(-15).join('\n')}`);
 }
 

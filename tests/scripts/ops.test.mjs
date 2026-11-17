@@ -208,3 +208,63 @@ describe('source backup and restore', () => {
     rmSync(dest, { recursive: true, force: true });
   });
 });
+
+describe('review fixes (ops)', () => {
+  test('a source restored from a backup ZIP can itself be backed up again (no duplicate _backup_info)', () => {
+    const out = tmp();
+    const proj = projectCopy();
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--out', out], { MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+    const zip = join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
+    const restored = join(tmp(), 'restored');
+    for (const e of readZip(zip)) {
+      mkdirSync(dirname(join(restored, e.name)), { recursive: true });
+      writeFileSync(join(restored, e.name), e.data);
+    }
+    symlinkSync(join(ROOT, 'node_modules'), join(restored, 'node_modules'), isWin ? 'junction' : 'dir');
+    const out2 = tmp();
+    const r = node(restored, 'scripts/backup.mjs', ['--out', out2], { MTM_CONFIG: join(restored, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    const names = readZip(join(out2, readdirSync(out2).find((n) => n.endsWith('.zip')))).map((e) => e.name);
+    assert.equal(names.filter((n) => n === '_backup_info/manifest.json').length, 1);
+  });
+
+  test('a ".git" FILE (git worktree) and .claude/settings.local.json are never packed', () => {
+    const proj = projectCopy();
+    writeFileSync(join(proj, '.git'), 'gitdir: /somewhere/else/.git/worktrees/x\n');
+    mkdirSync(join(proj, '.claude'), { recursive: true });
+    writeFileSync(join(proj, '.claude', 'settings.local.json'), '{"permissions":{"allow":["Bash(curl -H token:abc)"]}}');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--out', out], { MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    const names = readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip')))).map((e) => e.name);
+    assert.ok(!names.includes('.git'));
+    assert.ok(!names.includes('.claude/settings.local.json'));
+    assert.ok(names.includes('.claude/skills/markdown-task-manager/SKILL.md'));
+  });
+
+  test('release refuses uncommitted changes (they would be published)', () => {
+    const proj = projectCopy();
+    const git = (...a) => run(proj, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...a]);
+    assert.equal(git('init', '-q').code, 0);
+    git('add', '-A');
+    assert.equal(git('commit', '-q', '-m', 'snapshot').code, 0);
+    writeFileSync(join(proj, 'README.md'), readFileSync(join(proj, 'README.md'), 'utf8') + '\n実パス C:\\Users\\someone\n');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--release', '--out', out], { MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 1);
+    assert.match(r.out, /未コミットの変更/);
+    assert.deepEqual(readdirSync(out), []);
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--release', '--allow-dirty', '--out', out], { MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+  });
+
+  test('deploy over an existing HTML needs a backup folder; nothing is created in the app folder', () => {
+    const o = opsFolders();
+    writeFileSync(join(o.app, 'task-manager.html'), '<html>old</html>');
+    writeFileSync(o.cfg, JSON.stringify({ appDir: o.app, dataDir: o.data }));
+    const r = node(ROOT, 'scripts/deploy.mjs', [], o.env);
+    assert.equal(r.code, 2);
+    assert.match(r.out, /backupDir/);
+    assert.deepEqual(readdirSync(o.app), ['task-manager.html']);
+    assert.equal(readFileSync(join(o.app, 'task-manager.html'), 'utf8'), '<html>old</html>');
+  });
+});

@@ -3,7 +3,8 @@
 //   npm run backup -- --label 作業前    ファイル名にラベルを付ける
 //   npm run backup -- --check-build    一時フォルダーへ試しにビルドし、結果を記録（失敗しても ZIP は作る）
 //   npm run backup -- --include-git    .git（履歴）も含める
-//   npm run backup -- --no-local-config  local.config.json 等の個別 PC 設定を含めない
+//   npm run backup -- --no-local-config  local.config.json（個別 PC 設定）を含めない
+//   npm run release -- --allow-dirty     未コミットの変更があっても公開用 ZIP を作る（通常は拒否）
 //   npm run backup:dry                 対象ファイルの一覧と除外理由だけ表示
 //   npm run release                    公開用 ZIP（dist/）。依存・実データ・個別設定・秘密情報なし
 //   --out <dir>                        出力先を指定
@@ -18,7 +19,7 @@ import { join, relative, resolve, basename, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { loadConfig, ROOT, isInside, timestamp } from './lib/config.mjs';
+import { loadConfig, ROOT, isInside, samePath, timestamp } from './lib/config.mjs';
 import { computeSourceHash, embeddedBuildInfo } from './lib/source-hash.mjs';
 import { writeZip, readZip } from './lib/zip.mjs';
 
@@ -28,6 +29,7 @@ const release = args.includes('--release');
 const dryRun = args.includes('--dry-run');
 const includeGit = args.includes('--include-git') && !release;
 const includeLocal = !args.includes('--no-local-config') && !release;
+const allowDirty = args.includes('--allow-dirty');
 const checkBuild = args.includes('--check-build');
 const label = (opt('--label') || '').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40);
 const root = resolve(opt('--root') || ROOT);
@@ -58,14 +60,20 @@ if (!outDir) {
 outDir = resolve(outDir);
 
 // ----- file selection -----
+// Reserved: the metadata folder this script adds to every ZIP (a restored copy must not pack the
+// old one again).
+const RESERVED_ROOT_DIRS = new Set(['_backup_info']);
 const EXCLUDED_DIRS = new Set(['node_modules', '.cache', 'coverage', 'test-results', 'playwright-report', '.playwright-mcp', 'tmp', '.tmp', 'backups', 'dist', '.npm', '.vscode-test']);
 const JUNK = [/\.log$/i, /\.tmp$/i, /\.partial$/i, /\.zip$/i, /^\.DS_Store$/, /^Thumbs\.db$/i, /^desktop\.ini$/i, /\.tmp-\d+$/, /^\.task-manager\.html\.deploying-/, /^npm-debug/, /~$/, /\.swp$/];
 const SECRET = [/^\.env$/i, /^\.env\.(?!example$|sample$)/i, /\.pem$/i, /\.key$/i, /\.pfx$/i, /\.p12$/i, /^id_(rsa|dsa|ecdsa|ed25519)/i, /^\.npmrc$/i, /^\.netrc$/i, /secret/i, /^credentials?(\..*)?$/i, /\.kdbx$/i, /^\.git-credentials$/i];
-const LOCAL_CONFIG = ['local.config.json', posix(join('.claude', 'settings.local.json'))];
-const skipped = { junk: [], secret: [], symlink: [], dir: [], local: [], data: [], untracked: [] };
+// Per-PC configuration kept in LOCAL backups (paths only, no secrets). Never in a release.
+const LOCAL_CONFIG = ['local.config.json'];
+// Per-PC tool settings that may contain tokens in allowed commands: never packed.
+const NEVER = [posix(join('.claude', 'settings.local.json'))];
+const skipped = { junk: [], secret: [], symlink: [], dir: [], local: [], data: [], untracked: [], reserved: [] };
 
 // Data folder or backup folder inside the dev folder must never be packed.
-const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d) => d && isInside(d, root) && resolve(d) !== root);
+const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d) => d && isInside(d, root) && !samePath(d, root));
 
 function walk(dir, out) {
   for (const name of readdirSync(dir).sort()) {
@@ -73,14 +81,18 @@ function walk(dir, out) {
     const rel = posix(relative(root, abs));
     const st = lstatSync(abs);
     if (st.isSymbolicLink()) { skipped.symlink.push(rel); continue; }
+    // ".git" is a folder in a normal checkout and a FILE ("gitdir: /abs/path") in a worktree:
+    // excluded in both cases unless the history is requested (a worktree pointer is never useful).
+    if (name === '.git' && (!includeGit || !st.isDirectory())) { skipped.dir.push(rel + (st.isDirectory() ? '/' : '')); continue; }
     if (st.isDirectory()) {
-      if (name === '.git' && !includeGit) { skipped.dir.push(rel + '/'); continue; }
+      if (dir === root && RESERVED_ROOT_DIRS.has(name)) { skipped.reserved.push(rel + '/'); continue; }
       if (EXCLUDED_DIRS.has(name)) { skipped.dir.push(rel + '/'); continue; }
-      if (protectedDirs.some((d) => resolve(d) === resolve(abs))) { skipped.data.push(rel + '/'); continue; }
+      if (protectedDirs.some((d) => samePath(d, abs))) { skipped.data.push(rel + '/'); continue; }
       walk(abs, out);
       continue;
     }
     if (!st.isFile()) continue;
+    if (NEVER.includes(rel)) { skipped.secret.push(rel); continue; }
     if (!rel.startsWith('.git/')) {
       if (LOCAL_CONFIG.includes(rel) && !includeLocal) { skipped.local.push(rel); continue; }
       if (JUNK.some((r) => r.test(name))) { skipped.junk.push(rel); continue; }
@@ -115,6 +127,12 @@ const gitInfo = hasGit ? {
   changes: (git('status', '--porcelain') || '').split('\n').filter(Boolean),
 } : { available: false };
 const dirty = gitInfo.available ? gitInfo.changes.length > 0 : null;
+// A public package must contain exactly what is committed: uncommitted edits (e.g. a real path or
+// a real task typed by mistake) would otherwise be published.
+if (release && dirty && !allowDirty && !dryRun) {
+  fail(`未コミットの変更があるため公開用 ZIP を作りません（${gitInfo.changes.length} 件）。コミットしてから実行してください（確認のうえ強制する場合のみ --allow-dirty）。\n${gitInfo.changes.slice(0, 10).join('\n')}`);
+}
+if (release && !gitInfo.available) console.warn('[注意] Git 情報がないため、公開用 ZIP は除外ルールだけで作成します。内容を確認してから配布してください。');
 
 const currentHash = computeSourceHash(root);
 const htmlPath = join(root, 'task-manager.html');
@@ -213,6 +231,12 @@ const infoEntries = [
   { name: '_backup_info/manifest.json', data: Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), mtime: now },
 ];
 const allEntries = [...entries, ...infoEntries];
+const seenNames = new Set();
+for (const e of allEntries) {
+  const key = e.name.toLowerCase(); // also catches names that differ only in case (Windows)
+  if (seenNames.has(key)) fail(`ZIP 内のファイル名が重複します: ${e.name}`);
+  seenNames.add(key);
+}
 
 try { mkdirSync(outDir, { recursive: true }); } catch (e) { fail(`出力先フォルダーを作れません: ${outDir}: ${e.message}`); }
 let finalPath = join(outDir, `${baseName}.zip`);

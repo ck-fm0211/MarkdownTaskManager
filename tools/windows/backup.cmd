@@ -5,6 +5,9 @@ setlocal
 cd /d "%~dp0..\.."
 call npm run backup -- %*
 set "ERR=%ERRORLEVEL%"
-if not "%ERR%"=="0" echo.& echo [NG] npm run backup failed (exit code %ERR%)
+if "%ERR%"=="0" goto done
+echo.
+echo [NG] npm run backup failed - exit code %ERR%
+:done
 if "%MTM_NO_PAUSE%"=="" pause
 exit /b %ERR%
