@@ -126,7 +126,8 @@ const gitInfo = hasGit ? {
   describe: git('describe', '--tags', '--always', '--dirty'),
   changes: (git('status', '--porcelain') || '').split('\n').filter(Boolean),
 } : { available: false };
-const dirty = gitInfo.available ? gitInfo.changes.length > 0 : null;
+// Local backup: any change counts (untracked files are packed too).
+let dirty = gitInfo.available ? gitInfo.changes.length > 0 : null;
 // A public package must contain exactly what is committed: uncommitted edits (e.g. a real path or
 // a real task typed by mistake) would otherwise be published.
 // Untracked files never go into a release (tracked files only), so only changes to TRACKED files count.
@@ -134,6 +135,8 @@ const trackedChanges = release && gitInfo.available ? (git('status', '--porcelai
 if (release && trackedChanges.length && !allowDirty && !dryRun) {
   fail(`未コミットの変更があるため公開用 ZIP を作りません（${trackedChanges.length} 件）。コミットしてから実行してください（確認のうえ強制する場合のみ --allow-dirty）。\n${trackedChanges.slice(0, 10).join('\n')}`);
 }
+// Release: only tracked files are packed, so only tracked changes make it "dirty".
+if (release && gitInfo.available) dirty = trackedChanges.length > 0;
 if (release && !gitInfo.available) console.warn('[注意] Git 情報がないため、公開用 ZIP は除外ルールだけで作成します。内容を確認してから配布してください。');
 
 const currentHash = computeSourceHash(root);
@@ -167,7 +170,11 @@ const manifest = {
   createdAtLocal: now.toString(),
   project: { name: pkg.name, version: pkg.version, folder: basename(root) },
   fork,
-  git: gitInfo.available ? { ...gitInfo, changes: gitInfo.changes.slice(0, 300) } : gitInfo,
+  // A release is public: no names of files that are NOT in it (untracked notes, secret-looking
+  // files ...) — counts only. A local backup keeps the full lists.
+  git: !gitInfo.available ? gitInfo
+    : release ? { ...gitInfo, changes: undefined, trackedChangeCount: trackedChanges.length }
+      : { ...gitInfo, changes: gitInfo.changes.slice(0, 300) },
   workInProgress: dirty,
   includesGitHistory: includeGit,
   includesLocalConfig: includeLocal && files.some((f) => LOCAL_CONFIG.includes(f.rel)),
@@ -178,7 +185,7 @@ const manifest = {
     htmlUpToDate: htmlInfo ? htmlInfo.sourceHash === currentHash : false,
     check: buildCheck,
   },
-  excluded: Object.fromEntries(Object.entries(skipped).map(([k, v]) => [k, v.slice(0, 200)])),
+  excluded: Object.fromEntries(Object.entries(skipped).map(([k, v]) => [k, release ? v.length : v.slice(0, 200)])),
   files: [],
 };
 

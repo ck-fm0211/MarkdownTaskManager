@@ -265,8 +265,28 @@ describe('review fixes (ops)', () => {
     const out = tmp();
     const r = node(proj, 'scripts/backup.mjs', ['--release', '--out', out], { MTM_CONFIG: join(proj, 'none.json') });
     assert.equal(r.code, 0, r.out);
-    const names = readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip')))).map((e) => e.name);
-    assert.ok(!names.includes('my-notes.txt'));
+    const zipName = readdirSync(out).find((n) => n.endsWith('.zip'));
+    assert.doesNotMatch(zipName, /-dirty/, 'untracked files do not make a release dirty');
+    const entries = readZip(join(out, zipName));
+    assert.ok(!entries.some((e) => e.name === 'my-notes.txt'));
+    // The public manifest must not even NAME files that are not in the ZIP.
+    const manifest = entries.find((e) => e.name === '_backup_info/manifest.json').data.toString('utf8');
+    assert.doesNotMatch(manifest, /my-notes/);
+    assert.match(entries.find((e) => e.name === '_backup_info/README-RESTORE.md').data.toString('utf8'), /作業途中の変更（未コミット）: なし/);
+  });
+
+  test('release manifest names no secret-looking or untracked files', () => {
+    const proj = projectCopy();
+    const git = (...a) => run(proj, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...a]);
+    git('init', '-q'); git('add', '-A'); git('commit', '-q', '-m', 'snapshot');
+    writeFileSync(join(proj, '.env'), 'TOKEN=x');
+    mkdirSync(join(proj, 'private'));
+    writeFileSync(join(proj, 'private', '取引先_評価.md'), 'x');
+    const out = tmp();
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--release', '--out', out], { MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+    const entries = readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip'))));
+    const manifest = entries.find((e) => e.name === '_backup_info/manifest.json').data.toString('utf8');
+    assert.doesNotMatch(manifest, /\.env|取引先|private/);
   });
 
   test('deploy over an existing HTML needs a backup folder; nothing is created in the app folder', () => {
