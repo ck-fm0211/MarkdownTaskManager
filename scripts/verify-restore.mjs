@@ -1,15 +1,21 @@
 // Check that a source backup ZIP can really be restored and built.
 //   npm run restore:verify -- <backup.zip> [--dest <empty folder>] [--keep] [--offline] [--skip-install]
+//                                          [--reuse-node-modules]
 // Steps: extract into an empty folder (default: a temp folder) → check every file against the
 // SHA-256 list in _backup_info/manifest.json → `npm ci` (lockfile) → build → compare.
+// `npm ci` needs the npm registry or a filled npm cache. On a PC without either, use
+// --reuse-node-modules: the dev folder's node_modules is linked instead (checks extraction and the
+// build, NOT that the lockfile installs). --skip-install alone only works if the destination
+// already has node_modules.
 // The original dev folder and the ZIP are only read.
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
 import { join, resolve, dirname, isAbsolute, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readZip } from './lib/zip.mjs';
 import { embeddedBuildInfo } from './lib/source-hash.mjs';
+import { ROOT } from './lib/config.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
@@ -17,7 +23,13 @@ const zipPath = args.find((a, i) => !a.startsWith('--') && !['--dest'].includes(
 const keep = args.includes('--keep') || !!opt('--dest');
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 
-function fail(msg) { console.error(`\n[復元確認 NG] ${msg}`); process.exit(1); }
+let linkedModules = null; // node_modules link made by --reuse-node-modules (removed on every exit)
+function unlinkModules() {
+  if (!linkedModules) return;
+  try { if (lstatSync(linkedModules).isSymbolicLink()) unlinkSync(linkedModules); } catch { /* not there */ }
+  linkedModules = null;
+}
+function fail(msg) { unlinkModules(); console.error(`\n[復元確認 NG] ${msg}`); process.exit(1); }
 if (!zipPath) fail('使い方: npm run restore:verify -- <backup.zip> [--dest <空のフォルダー>] [--keep] [--offline]');
 
 let dest = opt('--dest');
@@ -58,7 +70,17 @@ const isWin = process.platform === 'win32';
 // (C:\Program Files\nodejs\node.exe contains a space and would be split).
 const run = (cmd, a, viaShell = false) => spawnSync(cmd, a, { cwd: dest, encoding: 'utf8', shell: viaShell, env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
 
-if (!args.includes('--skip-install')) {
+const reuse = args.includes('--reuse-node-modules');
+const linked = join(dest, 'node_modules');
+if (reuse) {
+  const src = join(ROOT, 'node_modules');
+  if (!existsSync(src)) fail(`--reuse-node-modules: 開発フォルダーに node_modules がありません（${src}）。先に開発フォルダーで npm ci を実行してください。`);
+  if (existsSync(linked)) fail('--reuse-node-modules: 展開先に node_modules が既にあります');
+  // A directory junction on Windows (no administrator right needed), a symlink elsewhere.
+  // Only the link itself is removed later (unlinkModules), never what it points to.
+  try { symlinkSync(src, linked, isWin ? 'junction' : 'dir'); linkedModules = linked; } catch (e) { fail(`node_modules をリンクできません: ${e.message}`); }
+  console.log('依存  : 開発フォルダーの node_modules を使用（npm ci は実行しません。ロックファイルからのインストールは未確認）');
+} else if (!args.includes('--skip-install')) {
   const ciArgs = ['ci', '--no-audit', '--no-fund', args.includes('--offline') ? '--offline' : '--prefer-offline'];
   console.log(`実行  : npm ${ciArgs.join(' ')}`);
   const r = run(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
@@ -81,5 +103,6 @@ if (existsSync(join(dest, 'task-manager.html'))) {
   console.log(`同梱HTML: source ${shipped ? shipped.sourceHash : 'なし'}（${same ? 'ソースと一致' : 'ソースと不一致 — 復元後は npm run build を実行'}）`);
 }
 
+unlinkModules();
 if (!keep) rmSync(dest, { recursive: true, force: true });
-console.log(`\n[復元確認 OK] ZIP から展開 → 依存の再インストール → ビルドまで成功しました。${keep ? `\n展開先を残しています: ${dest}` : ''}`);
+console.log(`\n[復元確認 OK] ZIP から展開 → ${reuse ? '（開発フォルダーの依存を使って）' : '依存の再インストール → '}ビルドまで成功しました。${keep ? `\n展開先を残しています: ${dest}` : ''}`);

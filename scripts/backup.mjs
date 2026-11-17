@@ -8,6 +8,7 @@
 //   npm run backup:dry                 対象ファイルの一覧と除外理由だけ表示
 //   npm run release                    公開用 ZIP（dist/）。依存・実データ・個別設定・秘密情報なし
 //   --out <dir>                        出力先を指定
+//   npm 自体が動かないとき（package.json が壊れている等）: node scripts/backup.mjs [同じオプション]
 //
 // A backup contains every file needed to restore and rebuild (sources, build, lockfile, built
 // HTML, docs, LICENSE, tests, AI instructions/skills, scripts) and leaves out what can be
@@ -18,7 +19,7 @@ import { readdirSync, lstatSync, readFileSync, existsSync, mkdirSync, renameSync
 import { join, relative, resolve, basename, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { loadConfig, ROOT, isInside, samePath, timestamp } from './lib/config.mjs';
 import { computeSourceHash, embeddedBuildInfo } from './lib/source-hash.mjs';
 import { writeZip, readZip } from './lib/zip.mjs';
@@ -42,10 +43,30 @@ function fail(msg) {
   process.exit(1);
 }
 
+// A backup must work in the middle of an edit, also when a metadata file is not valid JSON at the
+// moment: the problem is recorded and the sources are packed under a fixed name. Only a public
+// release requires valid metadata (and a valid configuration: it decides what must not be packed).
+const metadataErrors = [];
+const configFile = process.env.MTM_CONFIG ? resolve(process.env.MTM_CONFIG) : join(root, 'local.config.json');
 let cfg;
-try { cfg = loadConfig({ root }); } catch (e) { fail(e.message); }
-const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const fork = existsSync(join(root, 'FORK_INFO.json')) ? JSON.parse(readFileSync(join(root, 'FORK_INFO.json'), 'utf8')) : null;
+try { cfg = loadConfig({ root }); } catch (e) {
+  if (release) fail(e.message);
+  metadataErrors.push(`設定: ${e.message}`);
+  console.warn(`[注意] 設定ファイルを読めません（${e.message}）。--out がなければ開発フォルダー内の backups/ に出力します。`);
+  cfg = { file: configFile, appDir: null, dataDir: null, backupDir: null };
+}
+function readJson(name, fallback) {
+  const p = join(root, name);
+  if (!existsSync(p)) return fallback;
+  try { return JSON.parse(readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (release) fail(`${name} を JSON として読めません: ${e.message}`);
+    metadataErrors.push(`${name}: ${e.message}`);
+    console.warn(`[注意] ${name} を JSON として読めません（${e.message}）。固定名でバックアップします。`);
+    return fallback;
+  }
+}
+const pkg = { name: 'markdown-task-manager', version: 'unknown', ...readJson('package.json', {}) };
+const fork = readJson('FORK_INFO.json', null);
 
 // Output folder
 let outDir = opt('--out');
@@ -65,12 +86,29 @@ outDir = resolve(outDir);
 const RESERVED_ROOT_DIRS = new Set(['_backup_info']);
 const EXCLUDED_DIRS = new Set(['node_modules', '.cache', 'coverage', 'test-results', 'playwright-report', '.playwright-mcp', 'tmp', '.tmp', 'backups', 'dist', '.npm', '.vscode-test']);
 const JUNK = [/\.log$/i, /\.tmp$/i, /\.partial$/i, /\.zip$/i, /^\.DS_Store$/, /^Thumbs\.db$/i, /^desktop\.ini$/i, /\.tmp-\d+$/, /^\.task-manager\.html\.deploying-/, /^npm-debug/, /~$/, /\.swp$/];
-const SECRET = [/^\.env$/i, /^\.env\.(?!example$|sample$)/i, /\.pem$/i, /\.key$/i, /\.pfx$/i, /\.p12$/i, /^id_(rsa|dsa|ecdsa|ed25519)/i, /^\.npmrc$/i, /^\.netrc$/i, /secret/i, /^credentials?(\..*)?$/i, /\.kdbx$/i, /^\.git-credentials$/i];
-// Per-PC configuration kept in LOCAL backups (paths only, no secrets). Never in a release.
+const SECRET = [/^\.env$/i, /^\.env\.(?!example$|sample$)/i, /\.pem$/i, /\.key$/i, /\.pfx$/i, /\.p12$/i, /^id_(rsa|dsa|ecdsa|ed25519)/i, /^\.npmrc$/i, /^\.netrc$/i, /secret/i, /^credentials?(\..*)?$/i, /\.kdbx$/i, /^\.git-credentials$/i,
+  /service[-_]?account/i, /\.ppk$/i, /\.jks$/i, /\.keystore$/i, /^\.pgpass$/i, /^\.htpasswd$/i];
+// Folders whose whole content is treated as secret (the file names inside say nothing:
+// "secrets/service.json", ".ssh/config", ".aws/credentials" ...). Never packed, not even locally.
+const SECRET_DIRS = [/secret/i, /^credentials?$/i, /^\.ssh$/i, /^\.gnupg$/i, /^\.aws$/i, /^\.azure$/i, /^\.kube$/i, /^\.docker$/i];
+// Per-PC configuration kept in LOCAL backups (paths only, no secrets). Never in a release. This is
+// local.config.json AND the file actually in use (MTM_CONFIG may name another file in the folder).
 const LOCAL_CONFIG = ['local.config.json'];
+if (cfg.file && isInside(cfg.file, root) && !samePath(cfg.file, root)) {
+  const rel = posix(relative(root, cfg.file));
+  if (!LOCAL_CONFIG.includes(rel)) LOCAL_CONFIG.push(rel);
+}
+// A release from a folder WITHOUT Git (e.g. an extracted ZIP) cannot ask Git what belongs to the
+// project, so it packs only these paths (everything else is left out and counted).
+const RELEASE_FILES = ['.gitattributes', '.gitignore', 'AGENTS.md', 'AI_WORKFLOW.md', 'CHANGELOG.md', 'FORK_INFO.json', 'LICENSE',
+  'README.md', 'readmeFR.md', 'archive.md', 'kanban.md', 'build.mjs', 'local.config.example.json', 'package.json', 'package-lock.json',
+  'task-manager.html', /^[A-Z_]+\.md\.exemple$/];
+const RELEASE_DIRS = ['.claude/skills/', 'docs/', 'examples/', 'scripts/', 'src/', 'tests/', 'tools/'];
+const inReleaseList = (rel) => RELEASE_DIRS.some((d) => rel.startsWith(d))
+  || RELEASE_FILES.some((f) => (typeof f === 'string' ? f === rel : f.test(rel)));
 // Per-PC tool settings that may contain tokens in allowed commands: never packed.
 const NEVER = [posix(join('.claude', 'settings.local.json'))];
-const skipped = { junk: [], secret: [], symlink: [], dir: [], local: [], data: [], untracked: [], reserved: [] };
+const skipped = { junk: [], secret: [], symlink: [], dir: [], local: [], data: [], untracked: [], reserved: [], notListed: [] };
 
 // Data folder or backup folder inside the dev folder must never be packed.
 const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d) => d && isInside(d, root) && !samePath(d, root));
@@ -87,6 +125,7 @@ function walk(dir, out) {
     if (st.isDirectory()) {
       if (dir === root && RESERVED_ROOT_DIRS.has(name)) { skipped.reserved.push(rel + '/'); continue; }
       if (EXCLUDED_DIRS.has(name)) { skipped.dir.push(rel + '/'); continue; }
+      if (rel !== '.git' && !rel.startsWith('.git/') && SECRET_DIRS.some((r) => r.test(name))) { skipped.secret.push(rel + '/'); continue; }
       if (protectedDirs.some((d) => samePath(d, abs))) { skipped.data.push(rel + '/'); continue; }
       walk(abs, out);
       continue;
@@ -114,6 +153,10 @@ if (release && hasGit) {
   // Public package: only files tracked by Git (an untracked local file can never leak).
   const tracked = new Set((git('ls-files', '-z') || '').split('\0').filter(Boolean));
   files = files.filter((f) => { if (tracked.has(f.rel)) return true; skipped.untracked.push(f.rel); return false; });
+} else if (release) {
+  // No Git: only the listed project files (a local note, a key or a per-PC file next to them is
+  // never published just because its name looks harmless).
+  files = files.filter((f) => { if (inReleaseList(f.rel)) return true; skipped.notListed.push(f.rel); return false; });
 }
 
 // ----- version / state information -----
@@ -137,7 +180,7 @@ if (release && trackedChanges.length && !allowDirty && !dryRun) {
 }
 // Release: only tracked files are packed, so only tracked changes make it "dirty".
 if (release && gitInfo.available) dirty = trackedChanges.length > 0;
-if (release && !gitInfo.available) console.warn('[注意] Git 情報がないため、公開用 ZIP は除外ルールだけで作成します。内容を確認してから配布してください。');
+if (release && !gitInfo.available) console.warn(`[注意] Git 情報がないため、公開用 ZIP には決められたプロジェクトのファイルだけを入れます（それ以外の ${skipped.notListed.length} 件は除外）。内容を確認してから配布してください。`);
 
 const currentHash = computeSourceHash(root);
 const htmlPath = join(root, 'task-manager.html');
@@ -148,8 +191,20 @@ if (checkBuild && !dryRun) {
   const tmp = mkdtempSync(join(tmpdir(), 'mtm-buildcheck-'));
   const out = join(tmp, 'task-manager.html');
   const r = spawnSync(process.execPath, [join(root, 'build.mjs'), '--out', out], { cwd: root, encoding: 'utf8' });
-  buildCheck = { run: true, ok: r.status === 0, output: (r.stdout + r.stderr).trim().split('\n').slice(-6).join('\n') };
+  buildCheck = { run: true, ok: r.status === 0, output: hidePaths((r.stdout + r.stderr).trim().split('\n').slice(-6).join('\n'), tmp) };
   rmSync(tmp, { recursive: true, force: true });
+}
+
+// The build output names its output file (a temp folder: user name on Windows) and may name the
+// project folder: neither belongs in a ZIP manifest (a release is public).
+function hidePaths(text, tmp) {
+  let out = String(text);
+  const variants = (p) => [p, p.split(sep).join('/'), p.split('/').join('\\')];
+  for (const [p, label] of [[tmp, '<一時フォルダー>'], [root, '<開発フォルダー>'], [homedir(), '~']]) {
+    for (const v of variants(resolve(p))) if (v && v.length > 1) out = out.split(v).join(label);
+  }
+  // build.mjs prints the output RELATIVE to the project ("../../../tmp/mtm-buildcheck-xxxx/…").
+  return out.replace(/(?:\.\.[\\/])*[^\s'"`]*mtm-buildcheck-[^\s'"`\\/]*/g, '<一時フォルダー>');
 }
 
 function npmVersion() {
@@ -176,6 +231,8 @@ const manifest = {
     : release ? { ...gitInfo, changes: undefined, trackedChangeCount: trackedChanges.length }
       : { ...gitInfo, changes: gitInfo.changes.slice(0, 300) },
   workInProgress: dirty,
+  // Metadata that could not be read (the backup was made anyway, under a fixed name).
+  metadataErrors,
   includesGitHistory: includeGit,
   includesLocalConfig: includeLocal && files.some((f) => LOCAL_CONFIG.includes(f.rel)),
   runtime: { node: process.version, npm: npmVersion(), platform: process.platform, engines: pkg.engines || null },
@@ -221,6 +278,7 @@ const readme = `# ${release ? 'リリースパッケージ' : 'ソースバッ�
 - ソースのハッシュ: ${currentHash}
 - 同梱 task-manager.html: ${htmlInfo ? `source ${htmlInfo.sourceHash}（${manifest.build.htmlUpToDate ? '現在のソースと一致' : 'ソースより古い／不一致 — 復元後に npm run build が必要'}）` : 'なし'}
 - ビルド確認: ${buildCheck.run ? (buildCheck.ok ? '成功（一時フォルダーで確認）' : '失敗（作業途中の可能性。下記の出力参照）') : '未実施（--check-build で実施）'}
+${metadataErrors.length ? `- 読めなかったメタ情報（作業途中の可能性。ソースはそのまま含めています）:\n${metadataErrors.map((m) => `  - ${m}`).join('\n')}\n` : ''}
 ${buildCheck.run && !buildCheck.ok ? '\n```\n' + buildCheck.output + '\n```\n' : ''}
 ## 復元手順
 
@@ -274,6 +332,8 @@ console.log(`  ファイル数 ${files.length}（${(total / 1024).toFixed(0)} KB
 console.log(`  作業途中の変更: ${yesNo(dirty)} / Git履歴: ${includeGit ? '含む' : '含まない'} / 個別設定: ${manifest.includesLocalConfig ? '含む' : '含まない'}`);
 console.log(`  HTML: ${manifest.build.htmlUpToDate ? '最新' : '要ビルド（ソースと不一致）'}${buildCheck.run ? ` / ビルド確認: ${buildCheck.ok ? '成功' : '失敗'}` : ''}`);
 if (skipped.secret.length) console.log(`  秘密情報の可能性があるため除外: ${skipped.secret.join(', ')}`);
+if (skipped.local.length) console.log(`  個別設定のため除外: ${skipped.local.join(', ')}`);
+if (metadataErrors.length) console.log(`  [注意] 読めなかったメタ情報: ${metadataErrors.length} 件（README-RESTORE.md に記録）`);
 if (!release && cfg.backupDir && isInside(finalPath, cfg.backupDir)) {
   console.log('※ OneDrive フォルダーへのローカル保存が完了した状態です。クラウドへの同期完了は OneDrive のアイコンで確認してください。');
 }

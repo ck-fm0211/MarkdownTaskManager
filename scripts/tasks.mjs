@@ -23,9 +23,17 @@ if (!dir) {
 const F = loadFormat();
 const kanbanPath = join(dir, 'kanban.md');
 const archivePath = join(dir, 'archive.md');
-const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
-const kanbanText = read(kanbanPath);
-const archiveText = read(archivePath);
+// Strict UTF-8 like the browser: a Shift_JIS file (e.g. written by Windows PowerShell 5.1
+// Set-Content / Add-Content) is reported, not read as replacement characters.
+const notUtf8 = [];
+const read = (p, label) => {
+  if (!existsSync(p)) return null;
+  const d = F.decodeUtf8(readFileSync(p));
+  if (!d.valid) notUtf8.push(label);
+  return d.text;
+};
+const kanbanText = read(kanbanPath, 'kanban.md');
+const archiveText = read(archivePath, 'archive.md');
 const k = kanbanText !== null ? F.parseKanbanContent(kanbanText) : null;
 const a = archiveText !== null ? F.parseArchiveContent(archiveText) : null;
 const active = k ? k.tasks : [];
@@ -59,25 +67,39 @@ if (cmd === 'where') {
   }
   if (!found) { console.error(`${q} は見つかりません`); process.exit(1); }
 } else if (cmd === 'check') {
+  // bad      = the browser opens the file READ-ONLY (saving would lose or garble something)
+  // toFix    = the browser opens it normally with a warning, but it must be fixed (duplicate ids:
+  //            a drag-and-drop finds the task by id and may move the other one)
   let bad = 0;
+  let toFix = 0;
   console.log(`dataDir: ${dir}`);
+  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
   if (!k) { console.log('  kanban.md がありません'); bad++; } else {
     console.log(`kanban.md : ${active.length} タスク（V2=${k.formatV2}）`);
     printProblems('kanban.md', k.problems); bad += k.problems.length;
-    k.warnings.forEach((w) => console.log(`  ⚠ ${w.code}: ${(w.ids || w.lines || []).join(', ')}`));
+    k.warnings.forEach((w) => {
+      console.log(`  ⚠ ${w.code}: ${(w.ids || w.lines || []).join(', ')}`);
+      if (w.code === 'duplicate-id') toFix++;
+    });
   }
   if (a) {
     console.log(`archive.md: ${archived.length} タスク`);
     printProblems('archive.md', a.problems); bad += a.problems.length;
+    a.warnings.forEach((w) => {
+      console.log(`  ⚠ archive.md ${w.code}: ${(w.ids || w.lines || []).join(', ')}`);
+      if (w.code === 'duplicate-id') toFix++;
+    });
   }
   const dups = F.findDuplicateIds(active, archived);
-  if (dups.length) { console.log(`  ✗ 現役・アーカイブを通して重複した ID: ${dups.join(', ')}`); bad++; }
+  if (dups.length) { console.log(`  ⚠ 現役・アーカイブを通して重複した ID: ${dups.join(', ')}`); toFix++; }
   const maxId = F.nextTaskNumber(0, active, archived) - 1;
   if (k && k.config.lastTaskId < maxId) console.log(`  ⚠ <!-- Config: Last Task ID: ${k.config.lastTaskId} --> が最大 ID ${maxId} より小さい（ブラウザーは自動で回避します）`);
   const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
   console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived))}`);
-  console.log(bad ? `\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます。` : '\n[OK] ブラウザーで安全に読み書きできる形式です。');
-  process.exit(bad ? 1 : 0);
+  if (bad) console.log(`\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます（保存すると失われる・化ける内容があるため）。`);
+  if (toFix) console.log(`${bad ? '' : '\n'}[NG] 重複した ID が ${toFix} 件あります。ブラウザーは警告を表示して通常どおり開きますが、ドラッグ移動などが別のタスクに作用するおそれがあるため、片方を修正してください。`);
+  if (!bad && !toFix) console.log('\n[OK] ブラウザーで安全に読み書きできる形式です。');
+  process.exit(bad || toFix ? 1 : 0);
 } else {
   console.error(`不明なコマンド: ${cmd}（where | check | next-id | show <ID>）`);
   process.exit(2);

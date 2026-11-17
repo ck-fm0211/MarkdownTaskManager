@@ -300,3 +300,101 @@ describe('review fixes (ops)', () => {
     assert.equal(readFileSync(join(o.app, 'task-manager.html'), 'utf8'), '<html>old</html>');
   });
 });
+
+describe('review round 5 (ops)', () => {
+  const zipOf = (out) => readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip'))));
+  const manifestOf = (entries) => JSON.parse(entries.find((e) => e.name === '_backup_info/manifest.json').data.toString('utf8'));
+
+  test('no Git: secret folders and the MTM_CONFIG file never reach a release; a local backup keeps the config only (review 1-5)', () => {
+    const proj = projectCopy(); // no .git: the exclusion rules alone decide
+    mkdirSync(join(proj, 'secrets'));
+    writeFileSync(join(proj, 'secrets', 'service-account.json'), '{"token":"dummy-not-real"}');
+    mkdirSync(join(proj, '.aws'));
+    writeFileSync(join(proj, '.aws', 'config'), '[default]\nregion=dummy\n');
+    const cfg = join(proj, 'company-pc.json');
+    writeFileSync(cfg, JSON.stringify({ dataDir: join(tmp(), 'data') }));
+    writeFileSync(join(proj, 'メモ_会議.txt'), 'local note');
+    const env = { MTM_CONFIG: cfg, MTM_APP_DIR: '', MTM_DATA_DIR: '', MTM_BACKUP_DIR: '' };
+
+    const rel = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--release', '--out', rel], env);
+    assert.equal(r.code, 0, r.out);
+    const names = zipOf(rel).map((e) => e.name);
+    for (const never of ['secrets/service-account.json', '.aws/config', 'company-pc.json', 'メモ_会議.txt']) assert.ok(!names.includes(never), never);
+    for (const must of ['task-manager.html', 'src/scripts/04-format.js', 'LICENSE', 'package-lock.json', 'CLAUDE.md.exemple']) assert.ok(names.includes(must), must);
+    assert.equal(manifestOf(zipOf(rel)).includesLocalConfig, false);
+
+    const local = tmp();
+    const b = node(proj, 'scripts/backup.mjs', ['--out', local], env);
+    assert.equal(b.code, 0, b.out);
+    const lnames = zipOf(local).map((e) => e.name);
+    assert.ok(!lnames.some((n) => n.startsWith('secrets/') || n.startsWith('.aws/')), 'secret folders are not even in a local backup');
+    assert.ok(lnames.includes('company-pc.json'), 'the per-PC config in use is kept locally');
+    assert.equal(manifestOf(zipOf(local)).includesLocalConfig, true);
+    assert.match(b.out, /個別設定: 含む/);
+  });
+
+  test('a backup is made even while package.json / FORK_INFO.json are broken JSON (review 1-9)', () => {
+    const proj = projectCopy();
+    const broken = '{\n  "name": "markdown-task-manager",\n  "version": \n';
+    writeFileSync(join(proj, 'package.json'), broken);
+    writeFileSync(join(proj, 'FORK_INFO.json'), '{ "upstream": ');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--out', out], { MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    const entries = zipOf(out);
+    assert.equal(entries.find((e) => e.name === 'package.json').data.toString('utf8'), broken, 'packed as it is');
+    const m = manifestOf(entries);
+    assert.equal(m.metadataErrors.length, 2);
+    assert.match(entries.find((e) => e.name === '_backup_info/README-RESTORE.md').data.toString('utf8'), /読めなかったメタ情報/);
+    // A public release still requires valid metadata.
+    assert.notEqual(node(proj, 'scripts/backup.mjs', ['--release', '--out', tmp()], { MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+  });
+
+  test('--check-build records no temporary or project path (review 2-11)', () => {
+    const proj = projectCopy();
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--check-build', '--out', out], { MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    const entries = zipOf(out);
+    const m = manifestOf(entries);
+    assert.equal(m.build.check.ok, true);
+    const texts = [JSON.stringify(m.build.check), entries.find((e) => e.name === '_backup_info/README-RESTORE.md').data.toString('utf8')];
+    for (const t of texts) {
+      assert.doesNotMatch(t, /mtm-buildcheck-/);
+      assert.ok(!t.includes(tmpdir()), 'no temp folder path');
+      assert.ok(!t.includes(proj), 'no project path');
+    }
+  });
+
+  test('tasks check: duplicate ids are a warning (not "read-only"); a Shift_JIS file is reported (review 2-10 / 2-1)', () => {
+    const dir = tmp();
+    const t1 = '### TASK-001 | 月次締め\n**Status**: todo\n';
+    writeFileSync(join(dir, 'kanban.md'), `# B\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n${t1}`);
+    writeFileSync(join(dir, 'archive.md'), `# Task Archive\n<!-- Format: v2 -->\n\n## Archives\n\n${t1}`);
+    let r = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /重複した ID/);
+    assert.doesNotMatch(r.out, /読み取り専用で開きます/);
+    // "タスク" in Shift_JIS, as written by Windows PowerShell 5.1 Set-Content.
+    writeFileSync(join(dir, 'archive.md'), Buffer.concat([Buffer.from('# Task Archive\n<!-- Format: v2 -->\n\n## Archives\n\n### TASK-002 | '), Buffer.from([0x83, 0x5e, 0x83, 0x58, 0x83, 0x4e]), Buffer.from('\n**Status**: done\n')]));
+    r = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /archive\.md: UTF-8 ではありません/);
+    assert.match(r.out, /読み取り専用で開きます/);
+  });
+
+  test('restore:verify --reuse-node-modules works without the npm registry and keeps the dev node_modules (review 2-9)', { timeout: 300000 }, () => {
+    const proj = projectCopy();
+    const out = tmp();
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--out', out], { MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+    const zip = join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
+    // No registry and an empty npm cache: `npm ci` cannot work here.
+    const env = { npm_config_offline: 'true', npm_config_cache: tmp('mtm-empty-cache-') };
+    const r = node(proj, 'scripts/verify-restore.mjs', [zip, '--reuse-node-modules'], env);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /復元確認 OK/);
+    assert.doesNotMatch(r.out, /実行 {2}: npm ci/);
+    assert.ok(existsSync(join(ROOT, 'node_modules', 'html-minifier-terser')), 'the linked node_modules was not deleted');
+  });
+});
