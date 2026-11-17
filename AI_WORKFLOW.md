@@ -212,6 +212,16 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
   are a fixed format: never translate them.
 - Where the real data lives: see `AGENTS.md` (`npm run tasks -- where`). The `kanban.md` /
   `archive.md` at the repository root are dummy samples.
+- **Encoding: UTF-8 without BOM.** A file in another encoding is opened read-only by the app (it would
+  otherwise be saved back garbled). On Windows, do **not** write the files with Windows PowerShell 5.1
+  `Set-Content`, `Add-Content`, `Out-File` or `>` / `>>` (they write Shift_JIS / UTF-16 by default). Use
+  your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default). `npm run tasks -- check` reports a
+  file that is not UTF-8.
+- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` — another format makes the board
+  read-only until it is fixed).
+- An example of the format (a `**Due**:` line, a checklist, a `### …` heading) belongs in a closed
+  ```` ``` ```` code block: lines in a code block are text, never task fields. A `### TASK-` line is a new
+  task even inside a code block — never write one there.
 
 ---
 

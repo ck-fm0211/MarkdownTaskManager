@@ -82,25 +82,38 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
 
 - 作業途中（ビルドが通らない状態）でも作成できます。ファイル名は
   `markdown-task-manager-src-<日時>[-ラベル][-dirty].zip`（`-dirty` は未コミットの変更あり）。
+- `package.json`・`FORK_INFO.json`・設定ファイルが編集途中で JSON として読めなくても作成できます（固定名
+  `markdown-task-manager` で作り、読めなかったことを `README-RESTORE.md` と manifest の `metadataErrors` に記録します。
+  設定ファイルが読めない場合、`--out` がなければ開発フォルダー内の `backups/` に出力します）。
+  `package.json` が壊れていると **npm 自体が起動しない**ため、そのときは `node scripts/backup.mjs`（オプションは同じ）
+  を直接実行します。`tools\windows\backup.cmd` は最初から Node を直接実行します。
 - 含めるもの: `src/`、`build.mjs`、`package.json`、`package-lock.json`、`task-manager.html`、ドキュメント、LICENSE、
   テスト、`AGENTS.md`、`AI_WORKFLOW.md`、`.claude/` などの AI 用設定、`scripts/`、`tools/`、`.gitignore` などの隠しファイル。
 - 除外するもの: `node_modules`、キャッシュ・ログ・一時ファイル、過去の ZIP（`backups/`・`dist/`・出力先自身）、
-  `.env`・鍵ファイル・`.npmrc`・`.claude/settings.local.json`（許可コマンドにトークンが含まれ得る）などの秘密情報らしきファイル、
+  `.env`・鍵ファイル・`.npmrc`・`.claude/settings.local.json`（許可コマンドにトークンが含まれ得る）・`service-account*.json`
+  などの秘密情報らしきファイル、`secrets/`・`credentials/`・`.ssh/`・`.aws/`・`.azure/`・`.gnupg/`・`.kube/`・`.docker/`
+  など秘密情報らしきフォルダー（中のファイル名にかかわらずフォルダーごと。ローカル保管用にも含めません）、
   設定された運用データフォルダー、復元した ZIP に入っていた `_backup_info/`（新しいものを作り直します）、
   Git worktree の `.git` ファイル。
 - **Git 履歴（`.git`）は既定で含めません。** この ZIP はソースの復元用で、Git 履歴は含みません。
   履歴も残したいときは `npm run backup -- --include-git`。
 - `local.config.json`（個別 PC 設定。フォルダーのパスのみ）は、**ローカル保管用のバックアップには含めます**（同じ PC で
   復元しやすくするため）。含めたくないときは `--no-local-config`。公開用の `npm run release` には決して含めません。
+  環境変数 `MTM_CONFIG` で別名の設定ファイル（開発フォルダー内）を使っている場合は、そのファイルも同じ扱いです。
 - `npm run release`（公開用 ZIP）は、Git 管理下のファイルだけを対象にし、**Git 管理下のファイルに未コミットの変更があると
   作成を拒否します**（作業中の内容が公開されるのを防ぐため。確認のうえ強制する場合のみ `--allow-dirty`）。
   未追跡のファイル（メモなど）は ZIP に入らないため作成を妨げず、ZIP 内の情報（manifest）にもファイル名は残しません
   （除外した件数だけを記録します）。
+  **Git のないフォルダー**（展開した ZIP など）から作る場合は、Git に聞けないため、決められたプロジェクトのファイル
+  （`src/`・`scripts/`・`tests/`・`tools/`・`docs/`・`examples/`・`.claude/skills/`、ルートの既知のファイル）だけを入れます。
+  それ以外のファイル（メモ・設定・鍵など）は名前にかかわらず入れません。`package.json` や設定ファイルが読めない場合は
+  作成しません。
 - ZIP は `.partial` として書き、全エントリーを読み戻して内容を照合してから正式な名前に変えます。
   失敗したら `.partial` は削除され、有効なバックアップと誤認されるファイルは残りません。同名がある場合は `-2` などを付け、上書きしません。
 - 古い世代は自動削除しません。D の容量を見て手動で整理してください。
 - ZIP 内の `_backup_info/README-RESTORE.md` に、作成日時・fork 元と基準コミット・Git の状態・作業途中の変更の有無・
-  実行環境・ビルド確認状況・復元手順を記録します（`--check-build` で一時フォルダーへの試しビルドの結果も記録）。
+  実行環境・ビルド確認状況・復元手順を記録します（`--check-build` で一時フォルダーへの試しビルドの結果も記録。
+  出力中の一時フォルダー・開発フォルダー・ホームフォルダーのパスは伏せて記録します）。
 
 ### 復元
 
@@ -111,13 +124,18 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
    npm run restore:verify -- "D:\…\backup\source\markdown-task-manager-src-20261117-101500.zip"
    ```
    一時フォルダーに展開 → 全ファイルの SHA-256 照合 → `npm ci` → ビルドまで行い、元のフォルダーは変更しません。
+   `npm ci` には npm レジストリへの接続か、npm のキャッシュが必要です。どちらもない PC では
+   `--reuse-node-modules` を付けると、開発フォルダーの `node_modules` をリンクして（`npm ci` なしで）展開・照合・ビルドを
+   確認します（ロックファイルからインストールできることは確認しません。リンクは終了時に外し、元の `node_modules` は
+   変更しません）。`--skip-install` だけでは、展開先に `node_modules` がないためビルドできません。
 
 ## 4. 会社 PC へ持ち込むもの
 
 - 必須: ソース一式の ZIP（GitHub の「Download ZIP」または `npm run release` の出力）。
   `node_modules`・実データ・個別 PC 設定・秘密情報は含みません。
 - 社内で npm レジストリに接続できない場合のみ: `npm ci` 済みの `node_modules` も（同じ OS・同じ Node.js メジャーバージョンで作ったもの）。
-- 持ち込み後は GitHub への接続なしで、ビルド・配備・バックアップ・復元確認がすべて動きます（`npm ci` 以外はオフライン）。
+- 持ち込み後は GitHub への接続なしで、ビルド・配備・バックアップが動きます。`npm ci`（初回と、復元確認の既定の動作）だけは
+  npm レジストリか npm のキャッシュが必要です。どちらもない場合、復元確認は `--reuse-node-modules` を付けて実行します。
 - 本家・fork との自動同期は行いません。必要な機能が揃った版を固定して使ってください。
 
 ## 5. OneDrive 利用時の注意

@@ -63,7 +63,10 @@ npm run check       # build → test
 `file://` を開けない環境では、自動で `http://127.0.0.1` から配信して実行します（`MTM_TEST_HTTP=1` で常にこの方式）。
 
 ブラウザーテストは実フォルダーではなく、File System Access API のモック（`tests/e2e/helpers.mjs`）を使います。
-読み込み失敗・書き込み失敗・遅延・外部編集・ファイル削除を注入できます。実フォルダー・OneDrive での確認は [TESTING.md](TESTING.md) の手順で行います。
+読み込み失敗・内容の読み取り失敗（`contentFail`）・書き込み失敗・遅延・外部編集・ファイル削除を注入でき、
+`writeBytes()` / `readBytes()` で UTF-8 以外のバイト列（Shift_JIS など）のファイルも扱えます。
+ネットワークなしの確認は、`file://` ではブラウザーをオフラインにし、`http://127.0.0.1` 配信のときはアプリの HTML だけを
+テスト内で直接返して、それ以外の通信をすべて遮断・記録します（記録が空であることを確認）。実フォルダー・OneDrive での確認は [TESTING.md](TESTING.md) の手順で行います。
 
 ## 翻訳の追加・変更
 
@@ -77,7 +80,15 @@ npm run check       # build → test
 ## 変更時の注意
 
 - kanban.md の保存は `autoSave()` / `persistKanban()`、それ以外の書き込み（archive.md など）は `enqueueWrite()` の中で
-  `writeFileChecked()` を使ってください（14-sync.js）。`createWritable()` を直接呼ばないこと。
+  `writeFileChecked()` を使ってください（14-sync.js）。`createWritable()` を直接呼ばないこと。`writeFileChecked()` は
+  読み取り専用（`session.blocked`）・競合中のファイルへの書き込みを拒否します。待ち行列に入れた処理は、実行を始める
+  時点で前提（読み取り専用でない・競合がない）をもう一度確認してください（10-archive.js の `refusedAtStart()`）。
+- ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外を検出）。
+- プロジェクトを開く処理を追加する場合は、`newProjectRequest()`（03-storage.js）で要求番号を取り、`await` のたびに
+  古い要求でないか確認してください。
+- 未保存の判定は `hasUnsavedWork()`（ボードの未保存 + フォームの入力）を使ってください。
+- タスクのフォームから書く値は、保存前に `taskWriteProblems()`（04-format.js）で読み戻しを確認しています。
 - データを変更する操作の先頭で `guardWritable()` を呼び、読み取り専用・競合中の編集を防いでください。
 - 成功通知は保存の成功を確認してから出してください（`persistKanban(成功メッセージ)`）。
 - 形式を変える場合は `tests/unit/format.test.mjs` に往復（解析 → 生成 → 解析）のテストを追加してください。
+  レビュー指摘の回帰テストは `tests/unit/review.test.mjs`・`tests/e2e/review.test.mjs`・`tests/scripts/ops.test.mjs` にあります。

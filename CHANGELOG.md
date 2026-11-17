@@ -9,6 +9,64 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes, round 5 (two external reviews of `ce7130e`)
+Data protection
+- Archive / restore / delete-from-archive re-check, when the queued job STARTS, that archive.md is not
+  read-only / unreadable / in conflict; `writeFileChecked()` itself refuses read-only files and an open
+  conflict. (An archive queued behind the re-read done by opening the archive list could rewrite an
+  archive.md that this re-read had just found read-only, dropping the unsupported lines.)
+- Project switching: every request (selector, folder picker, startup restore) has a number; a request
+  overtaken while waiting for a permission prompt is dropped, and the "unsaved changes" question is asked
+  right before the switch. (A late permission grant could open its folder over a project opened and edited
+  meanwhile, discarding its unsaved edits without a question.)
+- Legacy V1 files: a `## ` section is matched to a column by its WHOLE heading (then without the leading
+  emoji, then by id slug), never by prefix; each section belongs to one column. Every `### TASK-` header
+  line must be read exactly once (checked on every load, not only when the count is short). (Columns
+  "Todo" and "Todo Later" made the migration duplicate one task and drop another; the original stayed in
+  `.v1-backup.md`.)
+- Task form during a conflict: "Save" applies the change to the page only (nothing written) so it is part
+  of "Download unsaved" / "Copy" and of the discard confirmations; typed but unsaved form input counts as
+  unsaved work (reload, project switch, closing the tab, × / Cancel ask first) and is included in the
+  export; the sync banner stays usable above an open dialog (the dialog moves below it).
+- Files that are not UTF-8 (e.g. Shift_JIS written by Windows PowerShell 5.1 `Set-Content` /
+  `Add-Content`) are detected (`TextDecoder` with `fatal`): kanban.md opens read-only, archive.md blocks
+  archive / restore; such a file is never written. `tasks check` reports it. (Before, archive.md was read
+  as U+FFFD and written back garbled on the next archive operation.)
+- Release ZIP from a folder without Git packs only a fixed list of project paths; folders such as
+  `secrets/`, `credentials/`, `.ssh/`, `.aws/` are never packed (also not in local backups); the
+  configuration file actually in use (`MTM_CONFIG`) is treated like `local.config.json`.
+
+Markdown / form
+- Lines inside a closed ``` / ~~~ code block are text: a `**Due**:` / `**Notes**:` / checkbox example no
+  longer becomes the task's field; the loss check compares code lines as code.
+- Upstream V2.0 metadata lines written without a priority (` | **Category**: … | **Assigned**: …`) are read.
+- The form refuses values that would not read back (`|` in category / assignees, blank title) and checks
+  the task with a write → read round trip (`taskWriteProblems`) before changing anything; a leading
+  full-width `＃` in tags is the tag marker. (Such a save "succeeded" and the next load opened the whole
+  board read-only.)
+- A language switch while the form is open keeps the selected (and a custom) priority (it was reset to
+  "none" and the priority was removed on save).
+- A task header never spans two lines (an empty title took the next line as title).
+- A failed automatic reload keeps its error notification (it was replaced by "changes loaded").
+
+Ops
+- `backup` works while `package.json` / `FORK_INFO.json` / the config are not valid JSON (recorded in
+  `metadataErrors` and README-RESTORE.md; a release still refuses); `backup.cmd` runs Node directly and
+  `node scripts/backup.mjs` is documented for when npm cannot start.
+- `--check-build` output no longer records the temporary / project / home folder path.
+- `tasks check`: duplicate ids are reported as "fix this" (the browser only warns), not as "opens read-only".
+- `restore:verify --reuse-node-modules` checks a ZIP without the npm registry (links the dev folder's
+  node_modules; the link is removed afterwards).
+
+Tests and docs
+- Regression tests for every item (unit 13, scripts 5, browser 10; they fail on `ce7130e` except the added
+  coverage test for unreadable content); the mock FS can hold raw bytes and fail content reads; the
+  offline test works when the page is served from localhost (`MTM_TEST_HTTP=1`). 137 tests.
+- The Claude skill (`.claude/skills/markdown-task-manager/SKILL.md`) no longer contains V1 steps
+  (sections per column, `Last Task ID + 1`); AGENTS.md / AI_WORKFLOW.md require UTF-8 and YYYY-MM-DD dates;
+  SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING updated (V1 migration and `.v1-backup.md`
+  documented for users).
+
 ### Review fixes, round 4 (final review)
 - Config keys accept any non-line-break space around the colon (full-width space U+3000, NBSP) in
   both the parser and the loss check (a Japanese IME no longer makes a board read-only).
