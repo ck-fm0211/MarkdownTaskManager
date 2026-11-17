@@ -126,9 +126,14 @@
 
         // Highest "### TASK-<n>" number written in a file, even in blocks that could not be
         // parsed (malformed header, unknown section): such ids must not be handed out again.
+        // Counted generously (skipping a number is harmless, reusing one is not): any heading level,
+        // optional spaces, full-width digits / hyphen (NFKC), e.g. "## TASK-050", "###TASK-070",
+        // "### TASK-０６０".
         function maxIdInText(text) {
             let max = 0;
-            for (const m of normalizeEol(text).matchAll(/^###\s+TASK-(\d+)/gm)) max = Math.max(max, parseInt(m[1], 10));
+            for (const m of normalizeEol(text).normalize('NFKC').matchAll(/^[^\S\n]*#{1,6}[^\S\n]*TASK[^\S\n]*[-‐‑–][^\S\n]*(\d+)/gmi)) {
+                max = Math.max(max, parseInt(m[1], 10));
+            }
             return max;
         }
 
@@ -317,6 +322,14 @@
                 const task = parseTask(id, titlePart, body, statusId, opts);
                 found.push(task);
                 if (report) {
+                    // Code fences are checked PER TASK: a fence that is not closed inside its own task
+                    // either hides a "### TASK-" line in a code block (it would silently become a new
+                    // task) or swallows the following tasks' structure — both are reported.
+                    const bodyLines = body.split('\n');
+                    const open = unclosedFences(bodyLines);
+                    if (open.length) report.push({ code: 'unclosed-code-block', id, lines: open });
+                    const headings = headingsOutsideFences(bodyLines);
+                    if (headings.length) report.push({ code: 'heading-in-tasks', id, lines: headings });
                     const lost = findLostLines(body, task, opts);
                     if (lost.length) report.push({ code: 'lossy-task', id, lines: lost });
                     // Saving must be a fixed point: what we write must read back as the same task
@@ -422,7 +435,9 @@
                 if (m) { toks.push('lastid:' + parseInt(m[1], 10)); return; }
                 m = l.match(/^#[ \t]+(.+?)$/);
                 if (m) { toks.push('title:' + m[1]); return; }
-                m = l.match(/^\*\*(Columns|Categories|Users|Priorities|Tags)\*\*\s*[:：]\s*(.*)$/);
+                // Same whitespace rule as parseConfigSection: any space except a line break
+                // (full-width space U+3000 and NBSP included).
+                m = l.match(/^\*\*(Columns|Categories|Users|Priorities|Tags)\*\*[^\S\n]*[:：][^\S\n]*(.*)$/);
                 if (m) {
                     const [, k, v] = m;
                     if (k === 'Columns') {
@@ -458,6 +473,21 @@
 
         // A "## " heading inside the task area (outside ``` code fences). In V2 every "## " line
         // after "## Tasks" would silently become part of the preceding task.
+        // Opening fence lines that are never closed (by the same character, at least as long).
+        function unclosedFences(lines) {
+            const open = [];
+            for (let i = 0; i < lines.length; i++) {
+                const m = lines[i].match(/^\s{0,3}(`{3,}|~{3,})/);
+                if (!m) continue;
+                const ch = m[1][0], len = m[1].length;
+                const closeRe = new RegExp(`^\\s{0,3}\\${ch}{${len},}\\s*$`);
+                let j = i + 1;
+                while (j < lines.length && !closeRe.test(lines[j])) j++;
+                if (j < lines.length) i = j; else open.push(lines[i].trim());
+            }
+            return open;
+        }
+
         function headingsOutsideFences(lines) {
             const found = [];
             for (let i = 0; i < lines.length; i++) {
@@ -501,7 +531,7 @@
             const section = content.match(/(?:^|\n)##[ \t]+⚙\uFE0F?[ \t]*Configuration[ \t]*((?:\n[\s\S]*?)?)(?=\n-{3,}[ \t]*(?:\n|$)|\n##\s|$)/u);
             if (section) {
                 const text = section[1];
-                const columnsMatch = text.match(/\*\*Columns\*\*[ \t]*[:：][ \t]*(\S.*)/);
+                const columnsMatch = text.match(/\*\*Columns\*\*[^\S\n]*[:：][^\S\n]*(\S.*)/);
                 if (columnsMatch) {
                     const used = new Set();
                     cfg.columns = columnsMatch[1].split('|').map((col, idx) => {
@@ -517,14 +547,14 @@
                         return { name, id };
                     }).filter(Boolean);
                 }
-                const cat = text.match(/\*\*Categories\*\*[ \t]*[:：][ \t]*(\S.*)/);
+                const cat = text.match(/\*\*Categories\*\*[^\S\n]*[:：][^\S\n]*(\S.*)/);
                 if (cat) cfg.categories = cat[1].split(',').map(c => c.trim()).filter(Boolean);
-                const usr = text.match(/\*\*Users\*\*[ \t]*[:：][ \t]*(\S.*)/);
+                const usr = text.match(/\*\*Users\*\*[^\S\n]*[:：][^\S\n]*(\S.*)/);
                 if (usr) cfg.users = usr[1].split(',').map(u => u.trim()).filter(Boolean);
-                const pri = text.match(/\*\*Priorities\*\*[ \t]*[:：][ \t]*(\S.*)/);
+                const pri = text.match(/\*\*Priorities\*\*[^\S\n]*[:：][^\S\n]*(\S.*)/);
                 if (pri) cfg.priorities = pri[1].split('|').map(p => p.trim()).filter(Boolean);
                 // Tags with or without "#" ("#バグ #改善" or "バグ, 改善").
-                const tg = text.match(/\*\*Tags\*\*[ \t]*[:：][ \t]*(\S.*)/);
+                const tg = text.match(/\*\*Tags\*\*[^\S\n]*[:：][^\S\n]*(\S.*)/);
                 if (tg) cfg.tags = tg[1].split(/[\s,、，]+/).map(x => x.replace(/^[#＃]/, '')).filter(Boolean);
             }
             if (cfg.columns.length === 0) cfg.columns = DEFAULT_COLUMNS.map(c => ({ ...c }));
@@ -561,8 +591,6 @@
                 const preamble = tasksIdx >= 0 ? lines.slice(0, tasksIdx) : lines;
                 const bodyLines = tasksIdx >= 0 ? lines.slice(tasksIdx + 1) : [];
                 headerLines.push(...preamble);
-                const headings = headingsOutsideFences(bodyLines);
-                if (headings.length) problems.push({ code: 'heading-in-tasks', lines: headings });
                 const firstHeader = bodyLines.findIndex(l => TASK_HEADER_RE.test(l));
                 const before = (firstHeader >= 0 ? bodyLines.slice(0, firstHeader) : bodyLines)
                     .filter(l => l.trim() && !/^-{3,}$/.test(l.trim()));
@@ -644,8 +672,6 @@
             const problems = [];
             const warnings = [];
             const tasks = parseTaskBlocks(content, 'archived', { statusMode: 'raw' }, problems);
-            const headings = firstHeader >= 0 ? headingsOutsideFences(lines.slice(firstHeader)) : [];
-            if (headings.length) problems.push({ code: 'heading-in-tasks', lines: headings });
             const loose = lines.filter(l => LOOSE_TASK_HEADER_RE.test(l));
             const malformed = loose.filter(l => !TASK_HEADER_RE.test(l) || !l.match(TASK_HEADER_RE)[2].trim());
             if (malformed.length) problems.push({ code: 'malformed-task-header', lines: malformed.map(l => l.trim()) });

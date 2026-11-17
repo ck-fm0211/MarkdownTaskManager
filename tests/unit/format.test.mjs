@@ -346,3 +346,35 @@ test('Subtasks written after Notes produce a warning', () => {
   assert.ok(p.warnings.some((w) => w.code === 'subtasks-in-notes' && w.lines.includes('TASK-001')));
   assert.deepEqual(plain(p.problems), []);
 });
+
+// ----- Regression tests for review findings (4th round) -----
+test('full-width space / NBSP after a config key is accepted (Japanese IME)', () => {
+  const p = cycles(HC('**Columns**：　📝 未着手 (todo) | ✅ 完了 (done)\n**Tags**: #バグ #改善\n**Categories**　:　経理\n'));
+  assert.deepEqual(plain(p.config.columns.map((c) => c.id)), ['todo', 'done']);
+  assert.deepEqual(plain(p.config.tags), ['バグ', '改善']);
+  assert.deepEqual(plain(p.config.categories), ['経理']);
+  assert.deepEqual(plain(p.problems), []);
+});
+
+test('a "### TASK-" line inside a code block (unclosed per task) is reported, never silently a task', () => {
+  const p = F.parseKanbanContent(HC('**Columns**: 📝 To Do (todo)\n').replace('**Status**: todo\n', '**Status**: todo\n\n**Notes**:\n```\n### TASK-099 | example\n```\n'));
+  assert.ok(p.problems.some((x) => x.code === 'unclosed-code-block' && x.id === 'TASK-001'));
+  // A properly closed code block without a task header is fine.
+  const q = F.parseKanbanContent(HC('**Columns**: 📝 To Do (todo)\n').replace('**Status**: todo\n', '**Status**: todo\n\n**Notes**:\n```md\n## 例\n```\n'));
+  assert.deepEqual(plain(q.problems), []);
+});
+
+test('code fences are checked per task (an unclosed fence is not closed by a later task)', () => {
+  const body = '### TASK-001 | a\n**Status**: todo\n\n**Notes**:\n```\nunclosed\n## 見出し\n\n### TASK-002 | b\n**Status**: todo\n\n**Notes**:\n```js\nx\n```\n';
+  const p = F.parseKanbanContent(`# B\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: 📝 To Do (todo)\n\n---\n\n## Tasks\n\n${body}`);
+  const codes = plain(p.problems.map((x) => `${x.code}:${x.id}`));
+  assert.ok(codes.includes('unclosed-code-block:TASK-001'));
+  assert.ok(codes.includes('heading-in-tasks:TASK-001'));
+  assert.ok(!codes.some((c) => c.endsWith('TASK-002')), codes.join());
+});
+
+test('maxIdInText counts every heading-like task id (h2, no space, full-width digits)', () => {
+  assert.equal(F.maxIdInText('## TASK-050 | x\n### TASK-０６０ | y\n###TASK-070 | z\n### TASK-010 | w\n'), 70);
+  assert.equal(F.maxIdInText('### ＴＡＳＫ－０８０ | full width\n'), 80);
+  assert.equal(F.maxIdInText('see TASK-999 in the text\n'), 0, 'mentions in text are not ids');
+});
