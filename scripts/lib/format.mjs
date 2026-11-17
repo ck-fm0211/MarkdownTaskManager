@@ -15,8 +15,10 @@ export function loadFormat(rootDir = root) {
     'legacyClean', 'getFirstEmoji', 'findPriorityLabel', 'resolveStatus', 'taskNumber',
     'formatTaskId', 'nextTaskNumber', 'maxIdInText', 'findDuplicateIds', 'matchesTaskId', 'taskMatchesSearch',
     'normalizeForSearch', 'normalizeEol', 'detectEol', 'legacySlug', 'defaultArchivePreamble',
+    'decodeUtf8', 'taskWriteProblems', 'parseTasksFromSection',
   ];
-  const ctx = vm.createContext({ console });
+  // TextDecoder is a Web API (not a JavaScript built-in), so it is passed in explicitly.
+  const ctx = vm.createContext({ console, TextDecoder });
   vm.runInContext(`${code}\n;globalThis.__fmt = { ${exportsList.join(', ')} };`, ctx, { filename: '04-format.js' });
   return ctx.__fmt;
 }

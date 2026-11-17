@@ -21,7 +21,9 @@
         const LOOSE_TASK_HEADER_RE = /^###\s+TASK-/;
         const META_KEYS = ['Status', 'Priority', 'Category', 'Assigned', 'Created', 'Started', 'Due', 'Finished', 'Tags'];
         // ":" may also be typed as a full-width "：" (Japanese IME); both are accepted.
-        const META_LINE_RE = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：]/;
+        // A leading "|" is accepted too: upstream V2.0 wrote " | **Category**: …" when a task had no
+        // priority (and " | **Assigned**: …" with neither priority nor category).
+        const META_LINE_RE = /^\s*(?:\|\s*)?\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：]/;
         const META_SEG_RE = /^\s*\*\*([A-Za-z]+)\*\*\s*[:：]\s*(.*?)\s*$/;
         const SECTION_STOP_RE = /^\s*\*\*(Subtasks|Notes|Links|Review|Dependencies)\*\*/i;
         const NOTES_RE = /^\s*\*\*Notes\*\*\s*[:：]/i;
@@ -34,6 +36,18 @@
         // LF line endings, no UTF-8 BOM (a BOM would hide the "# Title" of the first line).
         function normalizeEol(content) {
             return String(content ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+        }
+
+        // Bytes of kanban.md / archive.md → text. The files are UTF-8; Blob.text() would silently
+        // turn the bytes of a Shift_JIS (cp932) / UTF-16 file into U+FFFD, and a later save would
+        // write the garbled text back. → { text, valid }: valid=false means "not UTF-8" (the text is
+        // the lossy decoding, for display only; such a file must never be written).
+        function decodeUtf8(bytes) {
+            try {
+                return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), valid: true };
+            } catch (e) {
+                return { text: new TextDecoder('utf-8').decode(bytes), valid: false };
+            }
         }
 
         // Drop trailing blank lines and "---" separators (old files put one between tasks).
@@ -189,13 +203,20 @@
             const columns = opts.columns || [];
             const statusMode = opts.statusMode || 'column';
             const lines = normalizeEol(content).split('\n');
+            // Lines inside a closed ``` / ~~~ code block are text, never structure: a
+            // "**Due**: 2026-12-31" or "**Notes**:" shown as an example in a code block must stay in
+            // the code block (it was silently turned into the task's own field before).
+            const fenced = fencedLineMask(lines);
+            const structural = (i, re) => !fenced[i] && re.test(lines[i]);
+            const findLine = (re) => lines.findIndex((l, i) => structural(i, re));
 
             // "Head" = lines before the first section (Subtasks/Notes/Links/Review/Dependencies).
             // Metadata is only read from the head, so a "**Created**:" inside notes is not mistaken
             // for the task's own field.
-            let headEnd = lines.findIndex(l => SECTION_STOP_RE.test(l));
+            let headEnd = findLine(SECTION_STOP_RE);
             if (headEnd < 0) headEnd = lines.length;
             const head = lines.slice(0, headEnd);
+            const isMetaLine = (i) => structural(i, META_LINE_RE);
 
             const task = {
                 id,
@@ -220,8 +241,8 @@
             // **Priority** (upstream issue #19), and so does a Japanese priority value.
             // An empty value ("**Category**:") is the same as an absent field.
             const seen = {};
-            head.forEach(line => {
-                if (!META_LINE_RE.test(line)) return;
+            head.forEach((line, i) => {
+                if (!isMetaLine(i)) return;
                 const segs = /^\s*\*\*Tags\*\*\s*[:：]/.test(line) ? [line] : line.split('|');
                 segs.forEach(seg => {
                     const m = seg.match(META_SEG_RE);
@@ -253,20 +274,22 @@
             // Description: the non-metadata lines of the head, kept verbatim (blank lines,
             // indentation and trailing double spaces = Markdown line breaks are preserved; only
             // outer blank lines and a trailing "---" separator are dropped).
-            const desc = trimTrailingSeparators(head.filter(l => !META_LINE_RE.test(l)));
+            const desc = trimTrailingSeparators(head.filter((l, i) => !isMetaLine(i)));
             while (desc.length && !desc[0].trim()) desc.shift();
             task.description = desc.join('\n');
 
             // Everything after **Notes**: belongs to the notes, so the other sections are only
             // looked for BEFORE it (a "**Subtasks**:" written after the notes stays in the notes
             // instead of being read twice and multiplied on every save).
-            let notesIdx = lines.findIndex(l => NOTES_RE.test(l));
+            let notesIdx = findLine(NOTES_RE);
             const beforeNotes = notesIdx >= 0 ? lines.slice(0, notesIdx) : lines;
 
             // Subtasks: only inside the **Subtasks** section (until the next "**Field**:").
             // Indentation (nested checkboxes) is kept.
             let inSubtasks = false;
-            for (const line of beforeNotes) {
+            for (let i = 0; i < beforeNotes.length; i++) {
+                const line = beforeNotes[i];
+                if (fenced[i]) { if (inSubtasks) inSubtasks = false; continue; }
                 if (/^\s*\*\*Subtasks\*\*/i.test(line)) { inSubtasks = true; continue; }
                 if (inSubtasks && /^\s*\*\*[^*\n]+\*\*\s*[:：]/.test(line)) inSubtasks = false;
                 if (inSubtasks) {
@@ -294,9 +317,10 @@
             const extraStop = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Subtasks)\*\*/i;
             const extraLines = [];
             let capturing = false;
-            for (const line of beforeNotes) {
-                if (extraStart.test(line)) { capturing = true; extraLines.push(line); continue; }
-                if (capturing && extraStop.test(line)) capturing = false;
+            for (let i = 0; i < beforeNotes.length; i++) {
+                const line = beforeNotes[i];
+                if (!fenced[i] && extraStart.test(line)) { capturing = true; extraLines.push(line); continue; }
+                if (capturing && !fenced[i] && extraStop.test(line)) capturing = false;
                 if (capturing) extraLines.push(line);
             }
             task.extra = trimTrailingSeparators(extraLines).join('\n').trim();
@@ -310,7 +334,9 @@
         function parseTaskBlocks(sectionContent, statusId, opts = {}, report = null) {
             const text = normalizeEol(sectionContent);
             const found = [];
-            const re = /^###\s+TASK-(\d+)\s*\|\s*(.+?)\s*$/gm;
+            // [^\S\n] = a space that is not a line break: a header never spans two lines (with \s an
+            // empty title would take the NEXT line as the title).
+            const re = /^###[^\S\n]+TASK-(\d+)[^\S\n]*\|[^\S\n]*(.+?)[^\S\n]*$/gm;
             const headers = [...text.matchAll(re)];
             headers.forEach((h, i) => {
                 const titlePart = h[2].trim();
@@ -342,22 +368,41 @@
             return found;
         }
 
-        // Extract the "## <sectionName>" section (legacy V1 files), then parse its task blocks.
+        // ----- Legacy V1 files ("## <column name>" sections) -----
+        // Upstream V1 wrote each column as "## <column name>". A heading is matched to a column by
+        // the WHOLE heading text (never by prefix: with columns "Todo" and "Todo Later", "## Todo
+        // Later" must not be read as "Todo"), then by the name without its leading emoji, then by
+        // the id slug. Each section belongs to at most one column.
+        const normHeading = s => String(s ?? '').normalize('NFKC').replace(/[\uFE0E\uFE0F]/g, '').replace(/\s+/g, ' ').trim();
+
+        function columnForHeading(title, columns) {
+            const h = normHeading(title);
+            const cols = columns || [];
+            return cols.find(c => normHeading(c.name) === h)
+                || (clean(h) && cols.find(c => clean(normHeading(c.name)) === clean(h)))
+                || cols.find(c => legacySlug(title) === c.id)
+                || null;
+        }
+
+        // "## " sections of a V1 file: [{ title, lines }] (the part before the first one is index -1).
+        function legacySections(content) {
+            return normalizeEol(content).split(/\n(?=##\s)/).map((part, pi) => {
+                const pl = part.split('\n');
+                if (pi === 0 && !/^##\s/.test(pl[0])) return { title: null, heading: null, lines: pl };
+                return { title: pl[0].replace(/^##\s+/, '').trim(), heading: pl[0], lines: pl.slice(1) };
+            });
+        }
+
+        // Task blocks of the section(s) of one column (kept for callers that ask by column).
         function parseTasksFromSection(content, sectionName, statusId, opts = {}, report = null) {
-            const sections = normalizeEol(content).split(/\n##\s+/);
-            for (const section of sections) {
-                if (section.startsWith(sectionName)) {
-                    return parseTaskBlocks(section.substring(sectionName.length).trim(), statusId, opts, report);
-                }
-            }
-            for (const section of sections) {
-                const nl = section.indexOf('\n');
-                const title = (nl >= 0 ? section.slice(0, nl) : section).trim();
-                if (legacySlug(title) === statusId) {
-                    return parseTaskBlocks(nl >= 0 ? section.slice(nl).trim() : '', statusId, opts, report);
-                }
-            }
-            return [];
+            const cols = opts.columns && opts.columns.length ? opts.columns : [{ name: sectionName, id: statusId }];
+            const out = [];
+            legacySections(content).forEach(sec => {
+                if (sec.title === null) return;
+                const col = columnForHeading(sec.title, cols);
+                if (col && col.id === statusId) out.push(...parseTaskBlocks(sec.lines.join('\n').trim(), statusId, opts, report));
+            });
+            return out;
         }
 
         // ----- Loss detection -----
@@ -367,9 +412,14 @@
         // survive a parse → generate cycle, otherwise the block is reported as lossy.
         function blockTokens(body, opts = {}) {
             const tokens = [];
-            normalizeEol(body).split('\n').forEach(raw => {
+            const all = normalizeEol(body).split('\n');
+            // A line inside a code block is compared as code: a "**Due**:" example that moved out
+            // of its code block into the task's fields counts as lost (and the other way round).
+            const fenced = fencedLineMask(all);
+            all.forEach((raw, i) => {
                 const line = raw.trim();
                 if (!line || /^-{3,}$/.test(line)) return;
+                if (fenced[i]) { tokens.push('code:' + line.replace(/\s+/g, ' ')); return; }
                 if (/^\*\*Tags\*\*\s*[:：]/.test(line)) {
                     const v = line.replace(/^\*\*Tags\*\*\s*[:：]\s*/, '');
                     (v.match(TAG_RE) || []).forEach(tg => tokens.push('tag:' + normTag(tg)));
@@ -488,6 +538,23 @@
             return open;
         }
 
+        // true for every line of a CLOSED ``` / ~~~ code block (opening and closing line included).
+        // An opener that is never closed is not a code block (same rule as headingsOutsideFences;
+        // such a task is reported as unclosed-code-block anyway).
+        function fencedLineMask(lines) {
+            const mask = new Array(lines.length).fill(false);
+            for (let i = 0; i < lines.length; i++) {
+                const m = lines[i].match(/^\s{0,3}(`{3,}|~{3,})/);
+                if (!m) continue;
+                const ch = m[1][0], len = m[1].length;
+                const closeRe = new RegExp(`^\\s{0,3}\\${ch}{${len},}\\s*$`);
+                let j = i + 1;
+                while (j < lines.length && !closeRe.test(lines[j])) j++;
+                if (j < lines.length) { for (let k = i; k <= j; k++) mask[k] = true; i = j; }
+            }
+            return mask;
+        }
+
         function headingsOutsideFences(lines) {
             const found = [];
             for (let i = 0; i < lines.length; i++) {
@@ -598,27 +665,29 @@
                 tasks.push(...parseTaskBlocks(bodyLines.join('\n'), config.columns[0].id, opts, problems));
             } else {
                 const opts = { columns: config.columns, statusMode: 'ignore' };
-                config.columns.forEach(column => {
-                    tasks.push(...parseTasksFromSection(content, column.name, column.id, opts, problems));
-                });
-                // Sections that are neither the config nor a column would be dropped on save.
-                const parts = content.split(/\n(?=##\s)/);
-                parts.forEach((part, pi) => {
-                    const pl = part.split('\n');
-                    if (pi === 0 && !/^##\s/.test(pl[0])) { headerLines.push(...pl); return; }
-                    const title = pl[0].replace(/^##\s+/, '').trim();
-                    if (/^⚙\uFE0F?\s*Configuration$/u.test(title)) { headerLines.push(...pl); return; }
-                    const isColumn = config.columns.some(c => title.startsWith(c.name) || legacySlug(title) === c.id);
-                    const body = pl.slice(1);
+                // Each "## " section is assigned to (at most) one column by its whole heading;
+                // sections that are neither the config nor a column would be dropped on save.
+                const byColumn = new Map(config.columns.map(c => [c.id, []]));
+                legacySections(content).forEach(sec => {
+                    if (sec.title === null) { headerLines.push(...sec.lines); return; }
+                    if (/^⚙\uFE0F?\s*Configuration$/u.test(sec.title)) { headerLines.push(sec.heading, ...sec.lines); return; }
+                    const col = columnForHeading(sec.title, config.columns);
+                    const body = sec.lines;
                     const firstHeader = body.findIndex(l => TASK_HEADER_RE.test(l));
                     const before = (firstHeader >= 0 ? body.slice(0, firstHeader) : body)
                         .filter(l => l.trim() && !/^-{3,}$/.test(l.trim()));
-                    if (!isColumn && body.some(l => l.trim() && !/^-{3,}$/.test(l.trim()))) {
-                        problems.push({ code: 'unknown-section', section: title, lines: body.filter(l => l.trim()).slice(0, 5).map(l => l.trim()) });
-                    } else if (isColumn && before.length) {
-                        problems.push({ code: 'text-outside-task', section: title, lines: before.map(l => l.trim()) });
+                    if (!col) {
+                        if (body.some(l => l.trim() && !/^-{3,}$/.test(l.trim()))) {
+                            problems.push({ code: 'unknown-section', section: sec.title, lines: body.filter(l => l.trim()).slice(0, 5).map(l => l.trim()) });
+                        }
+                        return;
                     }
+                    if (before.length) problems.push({ code: 'text-outside-task', section: sec.title, lines: before.map(l => l.trim()) });
+                    byColumn.get(col.id).push(sec);
                 });
+                config.columns.forEach(column => byColumn.get(column.id).forEach(sec => {
+                    tasks.push(...parseTaskBlocks(sec.lines.join('\n').trim(), column.id, opts, problems));
+                }));
             }
 
             // Header: keep extra HTML comments (e.g. notes left by an AI), then check that nothing of
@@ -637,18 +706,21 @@
             const loose = lines.filter(l => LOOSE_TASK_HEADER_RE.test(l));
             const malformed = loose.filter(l => !TASK_HEADER_RE.test(l) || !l.match(TASK_HEADER_RE)[2].trim());
             if (malformed.length) problems.push({ code: 'malformed-task-header', lines: malformed.map(l => l.trim()) });
-            const strictCount = loose.length - malformed.length;
-            if (tasks.length < strictCount) {
-                const parsed = new Map();
-                tasks.forEach(t => parsed.set(t.id, (parsed.get(t.id) || 0) + 1));
-                const missing = [];
-                loose.filter(l => !malformed.includes(l)).forEach(l => {
-                    const id = formatTaskId(l.match(TASK_HEADER_RE)[1]);
-                    const n = parsed.get(id) || 0;
-                    if (n > 0) parsed.set(id, n - 1); else missing.push(l.trim());
-                });
-                problems.push({ code: 'task-not-in-column', lines: missing });
-            }
+            // Checked header by header on every load (not only when the count is short): a block that
+            // was read twice can otherwise hide one that was not read at all.
+            const key = (id, title) => `${id} | ${title}`;
+            const parsed = new Map();
+            tasks.forEach(t => { const k = key(t.id, t.title); parsed.set(k, (parsed.get(k) || 0) + 1); });
+            const missing = [];
+            loose.filter(l => !malformed.includes(l)).forEach(l => {
+                const m = l.match(TASK_HEADER_RE);
+                const k = key(formatTaskId(m[1]), m[2].trim());
+                const n = parsed.get(k) || 0;
+                if (n > 0) parsed.set(k, n - 1); else missing.push(l.trim());
+            });
+            if (missing.length) problems.push({ code: 'task-not-in-column', lines: missing });
+            const twice = [...parsed.entries()].filter(([, n]) => n > 0).map(([k]) => k);
+            if (twice.length) problems.push({ code: 'task-read-twice', lines: twice });
 
             const dups = findDuplicateIds(tasks);
             if (dups.length) warnings.push({ code: 'duplicate-id', ids: dups });
@@ -712,6 +784,33 @@
         // Two task objects are "the same task" when they serialize identically.
         function sameTask(a, b) {
             return !!a && !!b && serializeTask(a) === serializeTask(b);
+        }
+
+        // Would this task, once written, read back as exactly the same task? Used by the task form
+        // before it changes the board: a value the Markdown format cannot carry ("|" in a category or
+        // an assignee, an empty title, a tag with "#" inside) would otherwise be saved "successfully"
+        // and make the whole board read-only on the next load. → [] when fine, otherwise problems in
+        // the same shape as parseKanbanContent()'s.
+        function taskWriteProblems(task, columns) {
+            const md = serializeTask(task);
+            const header = md.slice(0, md.indexOf('\n'));
+            const h = header.match(TASK_HEADER_RE);
+            if (!h || !h[2].trim() || h[2].trim() !== String(task.title ?? '')) {
+                return [{ code: 'malformed-task-header', id: task.id, lines: [header] }];
+            }
+            const cols = columns && columns.length ? columns : DEFAULT_COLUMNS;
+            const problems = [];
+            const parsed = parseTaskBlocks(md, cols[0].id, { columns: cols, statusMode: 'column' }, problems);
+            if (parsed.length !== 1) {
+                problems.push({ code: 'task-read-twice', id: task.id, lines: parsed.map(p => `${p.id} | ${p.title}`) });
+                return problems;
+            }
+            const again = serializeTask(parsed[0]);
+            if (again !== md && !problems.some(p => p.code === 'lossy-task' || p.code === 'unstable-task')) {
+                const back = new Set(again.split('\n'));
+                problems.push({ code: 'unstable-task', id: task.id, lines: md.split('\n').filter(l => l.trim() && !back.has(l)) });
+            }
+            return problems;
         }
 
         function withEol(text, eol) {
