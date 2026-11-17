@@ -21,9 +21,12 @@
         const LOOSE_TASK_HEADER_RE = /^###\s+TASK-/;
         const META_KEYS = ['Status', 'Priority', 'Category', 'Assigned', 'Created', 'Started', 'Due', 'Finished', 'Tags'];
         // ":" may also be typed as a full-width "：" (Japanese IME); both are accepted.
-        // A leading "|" is accepted too: upstream V2.0 wrote " | **Category**: …" when a task had no
-        // priority (and " | **Assigned**: …" with neither priority nor category).
-        const META_LINE_RE = /^\s*(?:\|\s*)?\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：]/;
+        const META_LINE_RE = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：]/;
+        // Upstream V2.0 wrote " | **Category**: …" when a task had no priority (and " | **Assigned**: …"
+        // with neither priority nor category). That form is read ONLY in the task's leading metadata
+        // lines (see metaLineMask) and never when the line ends with "|": a Markdown table row such
+        // as "| **Due**: 2026-01-01 |" in the description is description text, not the task's field.
+        const PIPED_META_LINE_RE = /^\s*\|\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：](?!.*\|\s*$)/;
         const META_SEG_RE = /^\s*\*\*([A-Za-z]+)\*\*\s*[:：]\s*(.*?)\s*$/;
         const SECTION_STOP_RE = /^\s*\*\*(Subtasks|Notes|Links|Review|Dependencies)\*\*/i;
         const NOTES_RE = /^\s*\*\*Notes\*\*\s*[:：]/i;
@@ -32,6 +35,28 @@
         const TAG_RE = /[#＃][^\s#＃,、，]+/g;
         const normTag = t => '#' + t.slice(1);
         const CHECKBOX_RE = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/;
+
+        // Which lines of a task body are metadata lines (fenced = fencedLineMask(lines)). A plain
+        // "**Key**:" line counts wherever it is (parseTask only reads the head); upstream's
+        // " | **Key**:" form only in the leading run of metadata lines right after the task header
+        // (before the first blank line or text). parseTask and the loss check (blockTokens) share
+        // this rule, so a line is never "a field" on one side and "text" on the other.
+        function metaLineMask(lines, fenced) {
+            const mask = lines.map((l, i) => !fenced[i] && META_LINE_RE.test(l));
+            let i = 0;
+            while (i < lines.length && !lines[i].trim()) i++;
+            for (; i < lines.length && !fenced[i]; i++) {
+                if (mask[i]) continue;
+                if (!PIPED_META_LINE_RE.test(lines[i])) break;
+                mask[i] = true;
+            }
+            return mask;
+        }
+
+        // A metadata line without upstream's leading "|" separator.
+        function metaText(line) {
+            return line.replace(/^\s*\|\s*/, '');
+        }
 
         // LF line endings, no UTF-8 BOM (a BOM would hide the "# Title" of the first line).
         function normalizeEol(content) {
@@ -216,7 +241,8 @@
             let headEnd = findLine(SECTION_STOP_RE);
             if (headEnd < 0) headEnd = lines.length;
             const head = lines.slice(0, headEnd);
-            const isMetaLine = (i) => structural(i, META_LINE_RE);
+            const metaMask = metaLineMask(lines, fenced);
+            const isMetaLine = (i) => metaMask[i];
 
             const task = {
                 id,
@@ -243,7 +269,8 @@
             const seen = {};
             head.forEach((line, i) => {
                 if (!isMetaLine(i)) return;
-                const segs = /^\s*\*\*Tags\*\*\s*[:：]/.test(line) ? [line] : line.split('|');
+                const text = metaText(line);
+                const segs = /^\s*\*\*Tags\*\*\s*[:：]/.test(text) ? [text] : text.split('|');
                 segs.forEach(seg => {
                     const m = seg.match(META_SEG_RE);
                     if (!m || !META_KEYS.includes(m[1]) || seen[m[1]] || !m[2]) return;
@@ -416,19 +443,22 @@
             // A line inside a code block is compared as code: a "**Due**:" example that moved out
             // of its code block into the task's fields counts as lost (and the other way round).
             const fenced = fencedLineMask(all);
+            // Same metadata rule as parseTask (a leading "|" only in the leading metadata lines).
+            const meta = metaLineMask(all, fenced);
             all.forEach((raw, i) => {
                 const line = raw.trim();
                 if (!line || /^-{3,}$/.test(line)) return;
                 if (fenced[i]) { tokens.push('code:' + line.replace(/\s+/g, ' ')); return; }
-                if (/^\*\*Tags\*\*\s*[:：]/.test(line)) {
-                    const v = line.replace(/^\*\*Tags\*\*\s*[:：]\s*/, '');
-                    (v.match(TAG_RE) || []).forEach(tg => tokens.push('tag:' + normTag(tg)));
-                    const rest = v.replace(TAG_RE, '').replace(/[\s,、，]+/g, '');
-                    if (rest) tokens.push('tagsrest:' + rest);
-                    return;
-                }
-                if (META_LINE_RE.test(line)) {
-                    line.split('|').forEach(seg => {
+                if (meta[i]) {
+                    const text = metaText(line);
+                    if (/^\*\*Tags\*\*\s*[:：]/.test(text)) {
+                        const v = text.replace(/^\*\*Tags\*\*\s*[:：]\s*/, '');
+                        (v.match(TAG_RE) || []).forEach(tg => tokens.push('tag:' + normTag(tg)));
+                        const rest = v.replace(TAG_RE, '').replace(/[\s,、，]+/g, '');
+                        if (rest) tokens.push('tagsrest:' + rest);
+                        return;
+                    }
+                    text.split('|').forEach(seg => {
                         const m = seg.match(META_SEG_RE);
                         if (!m) { if (seg.trim()) tokens.push('seg:' + seg.trim()); return; }
                         let [, k, v] = m;

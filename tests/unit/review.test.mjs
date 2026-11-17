@@ -215,3 +215,72 @@ describe('what the task form may write (review 1-8 / 2-3)', () => {
     assert.ok(!r.tasks.some((t) => t.title === '**Status**: todo'), JSON.stringify(r.tasks.map((t) => t.title)));
   });
 });
+
+// ----- Round 6: two external reviews of 9071e08 -----
+
+describe('upstream leading "|" only in the leading metadata lines (round 6: review 1-6 / 2-2)', () => {
+  test('" | **Tags**: #経理" (and "＃経理", a "|" inside a tag) is read as tags, not reported as lossy', () => {
+    const md = v2Board(`### TASK-001 | t
+**Status**: todo
+ | **Category**: 経理
+ | **Tags**: #経理
+
+### TASK-002 | u
+**Status**: todo
+ | **Tags**: ＃経理 #a|b
+`);
+    const r = F.parseKanbanContent(md);
+    assert.deepEqual(plain(r.problems), []);
+    assert.deepEqual(plain(r.tasks[0].tags), ['#経理']);
+    assert.equal(r.tasks[0].category, '経理');
+    assert.deepEqual(plain(r.tasks[1].tags), ['#経理', '#a|b']);
+  });
+
+  test('a Markdown table in the description stays description text (no field, not read-only)', () => {
+    const table = [
+      '| 項目 | 値 |',
+      '|---|---|',
+      '| **Due**: 2026-01-01 |',
+      '| **Status**: 確認中 | 田中 |',
+      '| **Category**: 経理 | メモ |',
+    ].join('\n');
+    const md = v2Board(`### TASK-001 | t
+**Status**: todo
+**Due**: 2026-02-01
+
+${table}
+
+**Subtasks**:
+- [ ] a
+`);
+    const r = F.parseKanbanContent(md);
+    assert.deepEqual(plain(r.problems), []);
+    const [task] = r.tasks;
+    assert.equal(task.due, '2026-02-01');
+    assert.equal(task.status, 'todo');
+    assert.equal(task.category, '');
+    assert.equal(task.description, table);
+    // Saving (e.g. after a subtask toggle) keeps the table and reads back the same (fixed point).
+    task.subtasks[0].completed = true;
+    const gen = F.serializeTask(task);
+    assert.ok(gen.includes(table), gen);
+    const again = F.parseKanbanContent(v2Board(gen));
+    assert.deepEqual(plain(again.problems), []);
+    assert.equal(F.serializeTask(again.tasks[0]), gen);
+  });
+
+  test('a table row right after the metadata (ends with "|") is not a field either', () => {
+    const r = F.parseKanbanContent(v2Board(`### TASK-001 | t
+**Status**: todo
+| **Due**: 2026-01-01 |
+`));
+    assert.deepEqual(plain(r.problems), []);
+    assert.equal(r.tasks[0].due, '');
+    assert.equal(r.tasks[0].description, '| **Due**: 2026-01-01 |');
+  });
+
+  test('the task form may write a table row with a field in the description', () => {
+    const t = { id: 'TASK-001', title: 't', status: 'todo', priority: '', category: '', assignees: [], tags: [], created: '', started: '', due: '', completed: '', description: '| **Due**: 2026-01-01 |', subtasks: [], notes: '', extra: '' };
+    assert.deepEqual(plain(F.taskWriteProblems(t, [{ name: 'To Do', id: 'todo' }])), []);
+  });
+});
