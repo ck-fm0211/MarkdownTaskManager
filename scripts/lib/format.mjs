@@ -13,7 +13,7 @@ export function loadFormat(rootDir = root) {
     'parseKanbanContent', 'parseArchiveContent', 'parseTask', 'parseTaskBlocks', 'serializeTask',
     'generateKanbanContent', 'generateArchiveContent', 'findLostLines', 'sameTask', 'clean',
     'legacyClean', 'getFirstEmoji', 'findPriorityLabel', 'resolveStatus', 'taskNumber',
-    'formatTaskId', 'nextTaskNumber', 'findDuplicateIds', 'matchesTaskId', 'taskMatchesSearch',
+    'formatTaskId', 'nextTaskNumber', 'maxIdInText', 'findDuplicateIds', 'matchesTaskId', 'taskMatchesSearch',
     'normalizeForSearch', 'normalizeEol', 'detectEol', 'legacySlug', 'defaultArchivePreamble',
   ];
   const ctx = vm.createContext({ console });

@@ -20,13 +20,30 @@
         // Anything that LOOKS like a task header (used to detect malformed headers).
         const LOOSE_TASK_HEADER_RE = /^###\s+TASK-/;
         const META_KEYS = ['Status', 'Priority', 'Category', 'Assigned', 'Created', 'Started', 'Due', 'Finished', 'Tags'];
-        const META_LINE_RE = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*:/;
+        // ":" may also be typed as a full-width "：" (Japanese IME); both are accepted.
+        const META_LINE_RE = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：]/;
+        const META_SEG_RE = /^\s*\*\*([A-Za-z]+)\*\*\s*[:：]\s*(.*?)\s*$/;
         const SECTION_STOP_RE = /^\s*\*\*(Subtasks|Notes|Links|Review|Dependencies)\*\*/i;
-        // Tags: "#" followed by anything except whitespace, "#" and ",". Unicode-safe (Japanese tags).
-        const TAG_RE = /#[^\s#,]+/g;
+        const NOTES_RE = /^\s*\*\*Notes\*\*\s*[:：]/i;
+        // Tags: "#" (or full-width "＃") followed by anything except whitespace, "#", "," and "、".
+        // Unicode-safe (Japanese tags). Stored with an ASCII "#".
+        const TAG_RE = /[#＃][^\s#＃,、，]+/g;
+        const normTag = t => '#' + t.slice(1);
+        const CHECKBOX_RE = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/;
 
+        // LF line endings, no UTF-8 BOM (a BOM would hide the "# Title" of the first line).
         function normalizeEol(content) {
-            return String(content ?? '').replace(/\r\n?/g, '\n');
+            return String(content ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+        }
+
+        // Drop trailing blank lines and "---" separators (old files put one between tasks).
+        function trimTrailingSeparators(lines) {
+            const all = lines.slice();
+            for (;;) {
+                while (all.length && !all[all.length - 1].trim()) all.pop();
+                if (all.length && /^\s*-{3,}\s*$/.test(all[all.length - 1])) { all.pop(); continue; }
+                return all;
+            }
         }
 
         function detectEol(content) {
@@ -105,6 +122,14 @@
                 if (Number.isFinite(n) && n > max) max = n;
             }));
             return max + 1;
+        }
+
+        // Highest "### TASK-<n>" number written in a file, even in blocks that could not be
+        // parsed (malformed header, unknown section): such ids must not be handed out again.
+        function maxIdInText(text) {
+            let max = 0;
+            for (const m of normalizeEol(text).matchAll(/^###\s+TASK-(\d+)/gm)) max = Math.max(max, parseInt(m[1], 10));
+            return max;
         }
 
         // Ids that appear more than once (within or across the given lists).
@@ -188,13 +213,14 @@
             // Metadata: every "**Key**: value" segment of the head's metadata lines, split on "|".
             // Order-independent and each field optional — a task with no **Category** keeps its
             // **Priority** (upstream issue #19), and so does a Japanese priority value.
+            // An empty value ("**Category**:") is the same as an absent field.
             const seen = {};
             head.forEach(line => {
                 if (!META_LINE_RE.test(line)) return;
-                const segs = /^\s*\*\*Tags\*\*\s*:/.test(line) ? [line] : line.split('|');
+                const segs = /^\s*\*\*Tags\*\*\s*[:：]/.test(line) ? [line] : line.split('|');
                 segs.forEach(seg => {
-                    const m = seg.match(/^\s*\*\*([A-Za-z]+)\*\*\s*:\s*(.*?)\s*$/);
-                    if (!m || !META_KEYS.includes(m[1]) || seen[m[1]]) return;
+                    const m = seg.match(META_SEG_RE);
+                    if (!m || !META_KEYS.includes(m[1]) || seen[m[1]] || !m[2]) return;
                     seen[m[1]] = true;
                     const v = m[2];
                     switch (m[1]) {
@@ -214,43 +240,47 @@
                         case 'Started': task.started = (v.match(/^[\d-]+/) || [''])[0]; break;
                         case 'Due': task.due = (v.match(/^[\d-]+/) || [''])[0]; break;
                         case 'Finished': task.completed = (v.match(/^[\d-]+/) || [''])[0]; break;
-                        case 'Tags': task.tags = v.match(TAG_RE) || []; break;
+                        case 'Tags': task.tags = (v.match(TAG_RE) || []).map(normTag); break;
                     }
                 });
             });
 
-            // Description: the non-metadata lines of the head, kept verbatim (blank lines and
-            // indentation inside the description are preserved; only outer blank lines trimmed).
-            const desc = head.filter(l => !META_LINE_RE.test(l)).map(l => l.replace(/\s+$/, ''));
+            // Description: the non-metadata lines of the head, kept verbatim (blank lines,
+            // indentation and trailing double spaces = Markdown line breaks are preserved; only
+            // outer blank lines and a trailing "---" separator are dropped).
+            const desc = trimTrailingSeparators(head.filter(l => !META_LINE_RE.test(l)));
             while (desc.length && !desc[0].trim()) desc.shift();
-            while (desc.length && !desc[desc.length - 1].trim()) desc.pop();
             task.description = desc.join('\n');
 
+            // Everything after **Notes**: belongs to the notes, so the other sections are only
+            // looked for BEFORE it (a "**Subtasks**:" written after the notes stays in the notes
+            // instead of being read twice and multiplied on every save).
+            let notesIdx = lines.findIndex(l => NOTES_RE.test(l));
+            const beforeNotes = notesIdx >= 0 ? lines.slice(0, notesIdx) : lines;
+
             // Subtasks: only inside the **Subtasks** section (until the next "**Field**:").
+            // Indentation (nested checkboxes) is kept.
             let inSubtasks = false;
-            for (const line of lines) {
+            for (const line of beforeNotes) {
                 if (/^\s*\*\*Subtasks\*\*/i.test(line)) { inSubtasks = true; continue; }
-                if (inSubtasks && /^\s*\*\*[^*\n]+\*\*\s*:/.test(line)) inSubtasks = false;
+                if (inSubtasks && /^\s*\*\*[^*\n]+\*\*\s*[:：]/.test(line)) inSubtasks = false;
                 if (inSubtasks) {
-                    const m = line.match(/^\s*[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/);
-                    if (m) task.subtasks.push({ completed: m[1] !== ' ', text: m[2] });
+                    const m = line.match(CHECKBOX_RE);
+                    if (m) {
+                        const st = { completed: m[2] !== ' ', text: m[3] };
+                        if (m[1]) st.indent = m[1];
+                        task.subtasks.push(st);
+                    }
                 }
             }
 
             // Notes: everything after **Notes**: to the end of the block (text on the same line
             // as "**Notes**:" is kept too).
-            const notesIdx = lines.findIndex(l => /^\s*\*\*Notes\*\*\s*:/i.test(l));
             if (notesIdx >= 0) {
-                const inline = lines[notesIdx].replace(/^\s*\*\*Notes\*\*\s*:\s*/i, '');
+                const inline = lines[notesIdx].replace(/^\s*\*\*Notes\*\*\s*[:：]\s*/i, '');
                 const rest = lines.slice(notesIdx + 1);
-                const all = (inline ? [inline] : []).concat(rest).map(l => l.replace(/\s+$/, ''));
+                const all = trimTrailingSeparators((inline ? [inline] : []).concat(rest));
                 while (all.length && !all[0].trim()) all.shift();
-                while (all.length && !all[all.length - 1].trim()) all.pop();
-                // Drop trailing "---" separators (old files put one between tasks).
-                while (all.length && /^\s*-{3,}\s*$/.test(all[all.length - 1])) {
-                    all.pop();
-                    while (all.length && !all[all.length - 1].trim()) all.pop();
-                }
                 task.notes = all.join('\n');
             }
 
@@ -259,14 +289,12 @@
             const extraStop = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Subtasks)\*\*/i;
             const extraLines = [];
             let capturing = false;
-            for (const line of lines) {
-                if (/^\s*\*\*Notes\*\*/i.test(line)) break;
-                if (extraStart.test(line)) { capturing = true; extraLines.push(line.replace(/\s+$/, '')); continue; }
+            for (const line of beforeNotes) {
+                if (extraStart.test(line)) { capturing = true; extraLines.push(line); continue; }
                 if (capturing && extraStop.test(line)) capturing = false;
-                if (capturing) extraLines.push(line.replace(/\s+$/, ''));
+                if (capturing) extraLines.push(line);
             }
-            while (extraLines.length && /^\s*(-{3,})?\s*$/.test(extraLines[extraLines.length - 1])) extraLines.pop();
-            task.extra = extraLines.join('\n').trim();
+            task.extra = trimTrailingSeparators(extraLines).join('\n').trim();
 
             return task;
         }
@@ -291,6 +319,11 @@
                 if (report) {
                     const lost = findLostLines(body, task, opts);
                     if (lost.length) report.push({ code: 'lossy-task', id, lines: lost });
+                    // Saving must be a fixed point: what we write must read back as the same task
+                    // (otherwise every save would change the file again, e.g. multiply subtasks).
+                    const gen = serializeTask(task);
+                    const again = parseTask(id, titlePart, gen.slice(gen.indexOf('\n') + 1), statusId, opts);
+                    if (serializeTask(again) !== gen) report.push({ code: 'unstable-task', id, lines: [] });
                 }
             });
             return found;
@@ -324,18 +357,19 @@
             normalizeEol(body).split('\n').forEach(raw => {
                 const line = raw.trim();
                 if (!line || /^-{3,}$/.test(line)) return;
-                if (/^\*\*Tags\*\*\s*:/.test(line)) {
-                    const v = line.replace(/^\*\*Tags\*\*\s*:\s*/, '');
-                    (v.match(TAG_RE) || []).forEach(tg => tokens.push('tag:' + tg));
-                    const rest = v.replace(TAG_RE, '').replace(/[\s,]+/g, '');
+                if (/^\*\*Tags\*\*\s*[:：]/.test(line)) {
+                    const v = line.replace(/^\*\*Tags\*\*\s*[:：]\s*/, '');
+                    (v.match(TAG_RE) || []).forEach(tg => tokens.push('tag:' + normTag(tg)));
+                    const rest = v.replace(TAG_RE, '').replace(/[\s,、，]+/g, '');
                     if (rest) tokens.push('tagsrest:' + rest);
                     return;
                 }
                 if (META_LINE_RE.test(line)) {
                     line.split('|').forEach(seg => {
-                        const m = seg.match(/^\s*\*\*([A-Za-z]+)\*\*\s*:\s*(.*?)\s*$/);
+                        const m = seg.match(META_SEG_RE);
                         if (!m) { if (seg.trim()) tokens.push('seg:' + seg.trim()); return; }
                         let [, k, v] = m;
+                        if (!v) return; // empty field == absent field
                         if (k === 'Priority') v = clean(v) || v;
                         if (k === 'Status' && (opts.statusMode || 'column') === 'column') v = resolveStatus(v, opts.columns) || v;
                         if (k === 'Status' && opts.statusMode === 'ignore') return; // legacy: status = section
@@ -344,13 +378,13 @@
                     });
                     return;
                 }
-                const cb = line.match(/^[-*+]\s+\[([ xX])\]\s+(.+?)$/);
-                if (cb) { tokens.push('cb:' + (cb[1] === ' ' ? ' ' : 'x') + ':' + cb[2].trim()); return; }
+                const cb = raw.match(CHECKBOX_RE);
+                if (cb) { tokens.push('cb:' + cb[1] + (cb[2] === ' ' ? ' ' : 'x') + ':' + cb[3].trim()); return; }
                 let t = line;
                 // Bare section headers carry no data of their own (an empty "**Notes**:" or
                 // "**Subtasks**:" is legitimately not written back).
-                if (/^\*\*(Subtasks|Notes)\*\*\s*:?$/i.test(t)) return;
-                if (/^\*\*Notes\*\*\s*:/i.test(t)) t = t.replace(/^\*\*Notes\*\*\s*:\s*/i, '');
+                if (/^\*\*(Subtasks|Notes)\*\*\s*[:：]?$/i.test(t)) return;
+                if (NOTES_RE.test(t)) t = t.replace(/^\*\*Notes\*\*\s*[:：]\s*/i, '');
                 tokens.push('line:' + t.replace(/\s+/g, ' '));
             });
             return tokens;
@@ -371,16 +405,65 @@
             return lost;
         }
 
-        // Lines allowed in the header part of kanban.md (title, comments, config). Anything else
-        // there would be dropped on save, so it is reported.
-        function isAllowedPreambleLine(line, isFirst) {
-            const l = line.trim();
-            if (!l || /^-{3,}$/.test(l)) return true;
-            if (isFirst && /^#\s+\S/.test(l)) return true;
-            if (/^<!--.*-->$/.test(l)) return true;
-            if (/^##\s+⚙️?\s*Configuration\s*$/.test(l)) return true;
-            if (/^\*\*(Columns|Categories|Users|Priorities|Tags)\*\*\s*:/.test(l)) return true;
-            return false;
+        // Header (title / comments / configuration) as comparable tokens. The original header and
+        // the header the generator would write are tokenised the same way; anything of the
+        // original that is missing from the generated one would be lost on save.
+        function headerTokens(lines) {
+            const toks = [];
+            const list = (prefix, values) => values.map(v => v.trim()).filter(Boolean).forEach(v => toks.push(prefix + v));
+            lines.forEach(raw => {
+                const l = raw.trim();
+                if (!l || /^-{3,}$/.test(l)) return;
+                if (/^<!--\s*Format:\s*v2\s*-->$/i.test(l)) return;
+                if (/^##\s+⚙\uFE0F?\s*Configuration\s*$/u.test(l)) return;
+                let m = l.match(/^<!--\s*Config:\s*Last Task ID:\s*(\d+)\s*-->$/);
+                if (m) { toks.push('lastid:' + parseInt(m[1], 10)); return; }
+                m = l.match(/^#[ \t]+(.+?)$/);
+                if (m) { toks.push('title:' + m[1]); return; }
+                m = l.match(/^\*\*(Columns|Categories|Users|Priorities|Tags)\*\*\s*[:：]\s*(.*)$/);
+                if (m) {
+                    const [, k, v] = m;
+                    if (k === 'Columns') {
+                        v.split('|').map(c => c.trim()).filter(Boolean).forEach(c => {
+                            const mm = c.match(COLUMN_RE);
+                            toks.push('col:' + (mm ? mm[1].trim() : c));
+                            if (mm) toks.push('colid:' + mm[2].trim());
+                        });
+                    } else if (k === 'Priorities') list('pri:', v.split('|'));
+                    else if (k === 'Tags') list('ctag:', v.split(/[\s,、，]+/).map(x => x.replace(/^[#＃]/, '')));
+                    else list(k === 'Users' ? 'user:' : 'cat:', v.split(','));
+                    return;
+                }
+                toks.push('line:' + l.replace(/\s+/g, ' '));
+            });
+            return toks;
+        }
+
+        function lostHeaderLines(originalLines, cfg) {
+            const gen = generateKanbanContent(cfg, []).split('\n');
+            const pool = new Map();
+            headerTokens(gen).forEach(t => pool.set(t, (pool.get(t) || 0) + 1));
+            const lost = [];
+            headerTokens(originalLines).forEach(t => {
+                const n = pool.get(t) || 0;
+                if (n > 0) pool.set(t, n - 1); else lost.push(t.replace(/^[a-z]+:/, ''));
+            });
+            return lost;
+        }
+
+        // "name (id)": the id is the LAST parenthesised part, so a name may contain "(…)".
+        const COLUMN_RE = /^(.*\S)\s*\(([^()]+)\)\s*$/;
+
+        // A "## " heading inside the task area (outside ``` code fences). In V2 every "## " line
+        // after "## Tasks" would silently become part of the preceding task.
+        function headingsOutsideFences(lines) {
+            const found = [];
+            let fence = false;
+            lines.forEach(l => {
+                if (/^\s*```/.test(l)) fence = !fence;
+                else if (!fence && /^##\s/.test(l)) found.push(l.trim());
+            });
+            return found;
         }
 
         function parseConfigSection(content) {
@@ -397,19 +480,20 @@
             const titleMatch = firstLine.match(/^#[ \t]+(.+?)[ \t]*$/);
             if (titleMatch) cfg.boardTitle = titleMatch[1].trim();
 
-            const idMatch = content.match(/<!-- Config: Last Task ID: (\d+) -->/);
+            const idMatch = content.match(/<!--\s*Config:\s*Last Task ID:\s*(\d+)\s*-->/);
             if (idMatch) cfg.lastTaskId = parseInt(idMatch[1], 10);
 
-            const section = content.match(/## ⚙️ Configuration\s+([\s\S]*?)(?:\n---|\n##\s|$)/);
+            // "## ⚙️ Configuration" with or without the emoji variation selector.
+            const section = content.match(/(?:^|\n)##[ \t]+⚙\uFE0F?[ \t]*Configuration[ \t]*((?:\n[\s\S]*?)?)(?=\n-{3,}[ \t]*(?:\n|$)|\n##\s|$)/u);
             if (section) {
                 const text = section[1];
-                const columnsMatch = text.match(/\*\*Columns\*\*:\s*(.+)/);
+                const columnsMatch = text.match(/\*\*Columns\*\*\s*[:：]\s*(.+)/);
                 if (columnsMatch) {
                     const used = new Set();
                     cfg.columns = columnsMatch[1].split('|').map((col, idx) => {
                         col = col.trim();
                         if (!col) return null;
-                        const m = col.match(/^(.+?)\s*\((.+?)\)\s*$/);
+                        const m = col.match(COLUMN_RE);
                         let name, baseId;
                         if (m) { name = m[1].trim(); baseId = m[2].trim(); }
                         else { name = col; baseId = legacySlug(col) || ('col' + (idx + 1)); }
@@ -419,14 +503,15 @@
                         return { name, id };
                     }).filter(Boolean);
                 }
-                const cat = text.match(/\*\*Categories\*\*:\s*(.+)/);
+                const cat = text.match(/\*\*Categories\*\*\s*[:：]\s*(.+)/);
                 if (cat) cfg.categories = cat[1].split(',').map(c => c.trim()).filter(Boolean);
-                const usr = text.match(/\*\*Users\*\*:\s*(.+)/);
+                const usr = text.match(/\*\*Users\*\*\s*[:：]\s*(.+)/);
                 if (usr) cfg.users = usr[1].split(',').map(u => u.trim()).filter(Boolean);
-                const pri = text.match(/\*\*Priorities\*\*:\s*(.+)/);
+                const pri = text.match(/\*\*Priorities\*\*\s*[:：]\s*(.+)/);
                 if (pri) cfg.priorities = pri[1].split('|').map(p => p.trim()).filter(Boolean);
-                const tg = text.match(/\*\*Tags\*\*:\s*(.+)/);
-                if (tg) cfg.tags = tg[1].split(/[\s,]+/).filter(x => x.startsWith('#') && x.length > 1).map(x => x.slice(1));
+                // Tags with or without "#" ("#バグ #改善" or "バグ, 改善").
+                const tg = text.match(/\*\*Tags\*\*\s*[:：]\s*(.+)/);
+                if (tg) cfg.tags = tg[1].split(/[\s,、，]+/).map(x => x.replace(/^[#＃]/, '')).filter(Boolean);
             }
             if (cfg.columns.length === 0) cfg.columns = DEFAULT_COLUMNS.map(c => ({ ...c }));
             if (cfg.categories.length === 0) cfg.categories = [...DEFAULT_CATEGORIES];
@@ -454,14 +539,16 @@
                 (!hasTasksHeading && sectionTitles.some(t => legacySlug(t) === c.id)));
             const formatV2 = hasMarker || (hasTasksHeading && !hasColumnSections);
             const lines = content.split('\n');
+            const headerLines = []; // title / comments / configuration part
 
             if (formatV2) {
                 const opts = { columns: config.columns, statusMode: 'column' };
                 const tasksIdx = lines.findIndex(l => /^##\s+Tasks\s*$/.test(l));
                 const preamble = tasksIdx >= 0 ? lines.slice(0, tasksIdx) : lines;
                 const bodyLines = tasksIdx >= 0 ? lines.slice(tasksIdx + 1) : [];
-                const badPre = preamble.filter((l, i) => !isAllowedPreambleLine(l, i === 0));
-                if (badPre.length) problems.push({ code: 'unknown-header-content', lines: badPre.map(l => l.trim()) });
+                headerLines.push(...preamble);
+                const headings = headingsOutsideFences(bodyLines);
+                if (headings.length) problems.push({ code: 'heading-in-tasks', lines: headings });
                 const firstHeader = bodyLines.findIndex(l => TASK_HEADER_RE.test(l));
                 const before = (firstHeader >= 0 ? bodyLines.slice(0, firstHeader) : bodyLines)
                     .filter(l => l.trim() && !/^-{3,}$/.test(l.trim()));
@@ -476,17 +563,9 @@
                 const parts = content.split(/\n(?=##\s)/);
                 parts.forEach((part, pi) => {
                     const pl = part.split('\n');
-                    if (pi === 0 && !/^##\s/.test(pl[0])) {
-                        const bad = pl.filter((l, i) => !isAllowedPreambleLine(l, i === 0));
-                        if (bad.length) problems.push({ code: 'unknown-header-content', lines: bad.map(l => l.trim()) });
-                        return;
-                    }
+                    if (pi === 0 && !/^##\s/.test(pl[0])) { headerLines.push(...pl); return; }
                     const title = pl[0].replace(/^##\s+/, '').trim();
-                    if (/^⚙️?\s*Configuration$/.test(title)) {
-                        const bad = pl.slice(1).filter(l => !isAllowedPreambleLine(l, false));
-                        if (bad.length) problems.push({ code: 'unknown-header-content', lines: bad.map(l => l.trim()) });
-                        return;
-                    }
+                    if (/^⚙\uFE0F?\s*Configuration$/u.test(title)) { headerLines.push(...pl); return; }
                     const isColumn = config.columns.some(c => title.startsWith(c.name) || legacySlug(title) === c.id);
                     const body = pl.slice(1);
                     const firstHeader = body.findIndex(l => TASK_HEADER_RE.test(l));
@@ -499,6 +578,13 @@
                     }
                 });
             }
+
+            // Header: keep extra HTML comments (e.g. notes left by an AI), then check that nothing of
+            // the title / comments / configuration would be lost or silently replaced on save.
+            config.comments = headerLines.map(l => l.trim()).filter(l => /^<!--.*-->$/.test(l)
+                && !/^<!--\s*Format:\s*v2\s*-->$/i.test(l) && !/^<!--\s*Config:\s*Last Task ID:/.test(l));
+            const lostHeader = lostHeaderLines(headerLines, config);
+            if (lostHeader.length) problems.push({ code: 'unknown-header-content', lines: lostHeader });
 
             // Every "### TASK-" line must have produced exactly one task.
             const loose = lines.filter(l => LOOSE_TASK_HEADER_RE.test(l));
@@ -536,6 +622,8 @@
             const problems = [];
             const warnings = [];
             const tasks = parseTaskBlocks(content, 'archived', { statusMode: 'raw' }, problems);
+            const headings = firstHeader >= 0 ? headingsOutsideFences(lines.slice(firstHeader)) : [];
+            if (headings.length) problems.push({ code: 'heading-in-tasks', lines: headings });
             const loose = lines.filter(l => LOOSE_TASK_HEADER_RE.test(l));
             const malformed = loose.filter(l => !TASK_HEADER_RE.test(l) || !l.match(TASK_HEADER_RE)[2].trim());
             if (malformed.length) problems.push({ code: 'malformed-task-header', lines: malformed.map(l => l.trim()) });
@@ -565,7 +653,7 @@
             if (task.description) md += `\n${task.description}\n`;
             if (task.subtasks && task.subtasks.length) {
                 md += `\n**Subtasks**:\n`;
-                task.subtasks.forEach(st => { md += `- [${st.completed ? 'x' : ' '}] ${st.text}\n`; });
+                task.subtasks.forEach(st => { md += `${st.indent || ''}- [${st.completed ? 'x' : ' '}] ${st.text}\n`; });
             }
             if (task.extra) md += `\n${task.extra}\n`;
             if (task.notes) md += `\n**Notes**:\n${task.notes}\n`;
@@ -589,7 +677,9 @@
             const users = uniq(cfg.users).length ? uniq(cfg.users) : DEFAULT_USERS;
             const priorities = (cfg.priorities || []).length ? cfg.priorities : DEFAULT_PRIORITIES;
             const tags = uniq(cfg.tags).length ? uniq(cfg.tags) : DEFAULT_TAGS;
-            let md = `# ${boardTitle}\n\n<!-- Config: Last Task ID: ${cfg.lastTaskId} -->\n<!-- Format: v2 -->\n\n`;
+            let md = `# ${boardTitle}\n\n<!-- Config: Last Task ID: ${cfg.lastTaskId} -->\n<!-- Format: v2 -->\n`;
+            (cfg.comments || []).forEach(c => { md += `${c}\n`; });
+            md += `\n`;
             md += `## ⚙️ Configuration\n\n`;
             md += `**Columns**: ${cfg.columns.map(c => `${c.name} (${c.id})`).join(' | ')}\n\n`;
             md += `**Categories**: ${categories.join(', ')}\n\n`;

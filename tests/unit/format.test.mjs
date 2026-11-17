@@ -224,3 +224,85 @@ test('Japanese column names without ids still get unique ids', () => {
   assert.deepEqual(plain(a.tasks.map((t) => t.status)), ['col1', 'col3']);
   assert.deepEqual(plain(a.problems), []);
 });
+
+// ----- Regression tests for review findings (2nd round) -----
+const H = (cfg = '', extraHead = '') => `# B\n<!-- Config: Last Task ID: 1 -->\n<!-- Format: v2 -->\n${extraHead}\n## ⚙️ Configuration\n\n**Columns**: 📝 To Do (todo) | ✅ Done (done)\n${cfg}\n---\n\n## Tasks\n\n`;
+const cycles = (md, n = 3) => {
+  let x = md; let first = null;
+  for (let i = 0; i < n; i++) {
+    const p = F.parseKanbanContent(x);
+    const g = F.generateKanbanContent(p.config, p.tasks);
+    if (first === null) first = g; else assert.equal(g, first, `save #${i + 1} changed the file again`);
+    x = g;
+  }
+  return F.parseKanbanContent(x);
+};
+
+test('Subtasks written after Notes stay in the notes and never multiply', () => {
+  const p = cycles(H() + '### TASK-001 | a\n**Status**: todo\n\n**Notes**:\nメモ\n\n**Subtasks**:\n- [ ] step\n', 4);
+  assert.equal(p.tasks[0].subtasks.length, 0);
+  assert.match(p.tasks[0].notes, /\*\*Subtasks\*\*:\n- \[ \] step/);
+  assert.deepEqual(plain(p.problems), []);
+});
+
+test('empty optional fields are not reported as lost', () => {
+  const p = F.parseKanbanContent(H() + '### TASK-001 | a\n**Status**: todo\n**Priority**: High | **Category**:\n**Due**:\n**Tags**:\n');
+  assert.deepEqual(plain(p.problems), []);
+  assert.equal(p.tasks[0].priority, 'High');
+  // A later non-empty duplicate is still read (the empty one does not shadow it).
+  const q = F.parseKanbanContent(H() + '### TASK-001 | a\n**Status**: todo\n**Category**:\n**Category**: 経理\n');
+  assert.equal(q.tasks[0].category, '経理');
+});
+
+test('header: extra comments are kept, config spelling variants are read, BOM title kept', () => {
+  let p = F.parseKanbanContent(H('', '<!-- 引継ぎ: ダミーメモ -->\n'));
+  assert.deepEqual(plain(p.problems), []);
+  assert.match(F.generateKanbanContent(p.config, p.tasks), /<!-- 引継ぎ: ダミーメモ -->/);
+  p = F.parseKanbanContent(H('**Categories** : 経理, 総務\n**Tags**: バグ, 改善\n'));
+  assert.deepEqual(plain(p.config.categories), ['経理', '総務']);
+  assert.deepEqual(plain(p.config.tags), ['バグ', '改善']);
+  assert.deepEqual(plain(p.problems), []);
+  p = F.parseKanbanContent(H().replace('## ⚙️ Configuration', '## ⚙ Configuration'));
+  assert.deepEqual(plain(p.config.columns.map((c) => c.id)), ['todo', 'done']);
+  assert.deepEqual(plain(p.problems), []);
+  p = F.parseKanbanContent('﻿' + H().replace('# B', '# 日本語ボード'));
+  assert.equal(p.config.boardTitle, '日本語ボード');
+});
+
+test('header content that cannot be kept makes the board read-only', () => {
+  for (const extra of ['**Owner**: 山田\n', '**Columns**: A (a)\n', '自由記述のメモ\n']) {
+    const p = F.parseKanbanContent(H(extra));
+    assert.ok(p.problems.some((q) => q.code === 'unknown-header-content'), JSON.stringify(extra));
+  }
+});
+
+test('column names may contain parentheses', () => {
+  const p = cycles(H().replace('✅ Done (done)', '✅ 完了 (済) (done)') + '### TASK-001 | a\n**Status**: done\n');
+  assert.equal(p.config.columns[1].name, '✅ 完了 (済)');
+  assert.equal(p.config.columns[1].id, 'done');
+  assert.equal(p.tasks[0].status, 'done');
+});
+
+test('nested subtasks keep their indentation; "## " in the task area is reported', () => {
+  const p = cycles(H() + '### TASK-001 | a\n**Status**: todo\n\n**Subtasks**:\n- [ ] 親\n  - [x] 子\n');
+  assert.equal(p.tasks[0].subtasks[1].indent, '  ');
+  assert.match(F.generateKanbanContent(p.config, p.tasks), /\n {2}- \[x\] 子\n/);
+  const q = F.parseKanbanContent(H() + '### TASK-001 | a\n**Status**: todo\n説明\n\n## メモ\n本文\n');
+  assert.ok(q.problems.some((x) => x.code === 'heading-in-tasks'));
+  // ...but not inside a code block in the notes
+  const r = F.parseKanbanContent(H() + '### TASK-001 | a\n**Status**: todo\n\n**Notes**:\n```md\n## 見出しの例\n```\n');
+  assert.deepEqual(plain(r.problems), []);
+});
+
+test('full-width colon / ＃ / 、 written by a Japanese IME are understood', () => {
+  const p = cycles(H() + '### TASK-001 | a\n**Status**：done\n**Priority**：High\n**Tags**: ＃経理 #総務、#人事\n');
+  assert.equal(p.tasks[0].status, 'done');
+  assert.equal(p.tasks[0].priority, 'High');
+  assert.deepEqual(plain(p.tasks[0].tags), ['#経理', '#総務', '#人事']);
+  assert.deepEqual(plain(p.problems), []);
+});
+
+test('Markdown hard line breaks are kept; "---" between tasks is dropped', () => {
+  const p = cycles(H() + '### TASK-001 | a\n**Status**: todo\n\n1行目  \n2行目\n\n---\n\n### TASK-002 | b\n**Status**: todo\n');
+  assert.equal(p.tasks[0].description, '1行目  \n2行目');
+});

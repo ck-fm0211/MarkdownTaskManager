@@ -43,7 +43,14 @@ if (cmd === 'where') {
   console.log(`kanban.md : ${kanbanText !== null ? 'あり' : 'なし'}`);
   console.log(`archive.md: ${archiveText !== null ? 'あり' : 'なし'}`);
 } else if (cmd === 'next-id') {
-  const n = F.nextTaskNumber(k ? k.config.lastTaskId : 0, active, archived);
+  // Same rule as the browser: above the counter, every parsed id and every "### TASK-<n>" line
+  // (even unparsed ones) of BOTH files. Refused when archive.md cannot be read completely.
+  if (a && a.problems.length) {
+    console.error('archive.md に解析できない内容があるため、重複しない ID を決められません。先に `npm run tasks -- check` で確認・修正してください。');
+    process.exit(1);
+  }
+  const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
+  const n = F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived);
   console.log(F.formatTaskId(n));
 } else if (cmd === 'show') {
   const q = F.formatTaskId(F.taskNumber(args[1] || ''));
@@ -68,7 +75,8 @@ if (cmd === 'where') {
   if (dups.length) { console.log(`  ✗ 現役・アーカイブを通して重複した ID: ${dups.join(', ')}`); bad++; }
   const maxId = F.nextTaskNumber(0, active, archived) - 1;
   if (k && k.config.lastTaskId < maxId) console.log(`  ⚠ <!-- Config: Last Task ID: ${k.config.lastTaskId} --> が最大 ID ${maxId} より小さい（ブラウザーは自動で回避します）`);
-  console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(k ? k.config.lastTaskId : 0, active, archived))}`);
+  const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
+  console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived))}`);
   console.log(bad ? `\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます。` : '\n[OK] ブラウザーで安全に読み書きできる形式です。');
   process.exit(bad ? 1 : 0);
 } else {
