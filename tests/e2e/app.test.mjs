@@ -7,6 +7,7 @@ import {
   launchBrowser, newPage, createDir, openFolder, waitIdle, readFile, writeFile, setFault,
   syncState, notificationText, board, archive, task,
 } from './helpers.mjs';
+import { readFileSync } from 'node:fs';
 
 let browser = null;
 let skipReason = '';
@@ -490,7 +491,22 @@ describe('search, priority, offline', () => {
   });
 
   it('works with no network: no external request is made', async ({ page, requests, context }) => {
-    await context.setOffline(true);
+    // The page itself comes from file:// — or from the local test server where file:// is not
+    // allowed (MTM_TEST_HTTP=1). In that case the app HTML is answered locally (route) and every
+    // other request is recorded and blocked, so the test checks the APP, not the test server.
+    const appUrl = page.url();
+    const blocked = [];
+    if (appUrl.startsWith('http')) {
+      const html = readFileSync(new URL('../../task-manager.html', import.meta.url));
+      await context.route('**/*', (route) => {
+        const u = route.request().url();
+        if (u === appUrl) return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
+        blocked.push(u);
+        return route.abort('internetdisconnected');
+      });
+    } else {
+      await context.setOffline(true);
+    }
     await createDir(page, 'p', { 'kanban.md': board(T1, { lastId: 1 }) });
     await page.reload();
     await page.evaluate(() => {
@@ -504,6 +520,7 @@ describe('search, priority, offline', () => {
     await page.click('#taskFormSubmitBtn');
     await waitIdle(page);
     assert.deepEqual(requests, []);
+    assert.deepEqual(blocked, []);
     assert.match(await readFile(page, 'q', 'kanban.md'), /offline/);
   });
 });
