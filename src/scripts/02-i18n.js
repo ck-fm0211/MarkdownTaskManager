@@ -211,8 +211,9 @@
                 'notif.restorePartial': '{id} was added to kanban.md, but archive.md could not be updated: the task is now in BOTH files. Run "Restore" again (no duplicate is created) or reload and check.',
                 'confirm.reloadDiscard': 'Reload from disk?\n\nYour unsaved changes in this page will be DISCARDED.\nUse "Download unsaved" or "Copy" first if you need them.',
                 'confirm.initFolder': 'The folder "{name}" has no kanban.md.\n\nCreate a new board (kanban.md and archive.md) in this folder?\n\nCancel if you picked the wrong folder (e.g. the folder that only contains task-manager.html).',
+                'confirm.initEmptyKanban': 'kanban.md in "{name}" is EMPTY.\n\nInitialise it as a new board?\n\nCancel if the file may have been damaged — check the OneDrive version history first.',
                 'confirm.leaveUnsaved': 'This project has unsaved changes (or a conflict).\n\nLeave it and discard them?\nCancel to stay and export them first.',
-                'alert.forbiddenHeading': 'This line would be read back as something else and was not saved:\n\n{line}\n\nNot allowed: "### TASK-…" and "## …" headings (outside code blocks); in the description also lines starting with **Status**:, **Priority**:, **Tags**:, **Subtasks**, **Notes** etc.',
+                'alert.forbiddenHeading': 'This line would be read back as something else and was not saved:\n\n{line}\n\nNot allowed: "### TASK-…" and "## …" headings (outside code blocks), code blocks that are not closed; in the description also lines starting with **Status**:, **Priority**:, **Tags**:, **Subtasks**, **Notes** etc.',
                 'alert.invalidColumnId': 'Invalid column id: it must be non-empty, unique and must not contain | ( or ).',
                 'alert.lastColumn': 'The last column cannot be deleted.',
                 'alert.columnNotEmpty': 'This column still contains {count} task(s). Move them to another column first.',
@@ -253,6 +254,7 @@
                 'integrity.heading-in-tasks': '"## " heading(s) in the task area (they would become part of a task):',
                 'integrity.unstable-task': '{id}: saving would not read back identically.',
                 'integrity.unstable-header': 'The configuration part would not read back identically after saving.',
+                'integrity.unclosed-code-block': '{id}: a ``` / ~~~ code block is not closed inside this task (a "### TASK-" line in it would become a separate task):',
                 'integrity.subtasks-in-notes': '"**Subtasks**:" written after "**Notes**:" is kept as note text, not as a checklist:',
                 'integrity.duplicate-id': 'Duplicate task id(s): {ids}',
                 'integrity.unknown-status': 'Task(s) with a **Status** that matches no column (shown in the first column):',
@@ -1017,8 +1019,9 @@
                 'notif.restorePartial': '{id} は kanban.md に追加しましたが、archive.md を更新できませんでした。現在このタスクは両方のファイルにあります。もう一度「復元」を実行する（重複は作られません）か、再読込して確認してください。',
                 'confirm.reloadDiscard': 'ディスクから再読込しますか？\n\nこの画面の未保存の変更は破棄されます。\n必要なら先に「未保存分をダウンロード」か「コピー」で退避してください。',
                 'confirm.initFolder': 'フォルダー「{name}」には kanban.md がありません。\n\nこのフォルダーに新しいボード（kanban.md と archive.md）を作成しますか？\n\nフォルダーを間違えた場合（task-manager.html だけを置くアプリ用フォルダーなど）はキャンセルしてください。',
+                'confirm.initEmptyKanban': 'フォルダー「{name}」の kanban.md は空です。\n\n新しいボードとして初期化しますか？\n\nファイルが壊れた可能性がある場合はキャンセルし、先に OneDrive のバージョン履歴を確認してください。',
                 'confirm.leaveUnsaved': 'このプロジェクトには未保存の変更（または競合）があります。\n\n破棄して移動しますか？\nキャンセルするとこの画面に残り、先に退避できます。',
-                'alert.forbiddenHeading': '次の行は読み込み時に別の意味に解釈されるため、保存しませんでした:\n\n{line}\n\n書けない行: 「### TASK-…」や「## …」の見出し（コードブロック外）。説明欄では「**Status**:」「**Priority**:」「**Tags**:」「**Subtasks**」「**Notes**」などで始まる行も不可。',
+                'alert.forbiddenHeading': '次の行は読み込み時に別の意味に解釈されるため、保存しませんでした:\n\n{line}\n\n書けない行: 「### TASK-…」や「## …」の見出し（コードブロック外）、閉じていないコードブロック。説明欄では「**Status**:」「**Priority**:」「**Tags**:」「**Subtasks**」「**Notes**」などで始まる行も不可。',
                 'alert.invalidColumnId': '列 ID が不正です。空でなく、他の列と重複せず、| ( ) を含まない値にしてください。',
                 'alert.lastColumn': '最後の 1 列は削除できません。',
                 'alert.columnNotEmpty': 'この列にはまだ {count} 件のタスクがあります。先に別の列へ移動してください。',
@@ -1059,6 +1062,7 @@
                 'integrity.heading-in-tasks': 'タスク領域に「## 」見出しがあります（直前のタスクの一部として扱われてしまいます）:',
                 'integrity.unstable-task': '{id}: 保存すると同じ内容として読み戻せません。',
                 'integrity.unstable-header': '設定部分を保存すると同じ内容として読み戻せません。',
+                'integrity.unclosed-code-block': '{id}: ``` / ~~~ のコードブロックがこのタスクの中で閉じていません（中の「### TASK-」行が別のタスクになってしまいます）:',
                 'integrity.subtasks-in-notes': '「**Notes**:」の後に書かれた「**Subtasks**:」は、チェックリストではなくメモの文章として扱います:',
                 'integrity.duplicate-id': '重複したタスク ID があります: {ids}',
                 'integrity.unknown-status': 'どの列とも一致しない **Status** のタスクがあります（先頭の列に表示）:',
@@ -1260,18 +1264,11 @@
                 modalTitle.textContent = t('taskDetail.title');
             }
 
-            // Update buttons in task detail modal
+            // An open detail dialog is re-rendered in the new language IN ITS OWN CONTEXT: a dialog of
+            // an archived task must stay read-only (no edit / archive / delete buttons).
             const taskModal = document.getElementById('taskModal');
-            if (taskModal) {
-                const actions = taskModal.querySelector('.actions');
-                if (actions) {
-                    actions.innerHTML = `
-                        <button class="btn btn-secondary" onclick="closeModal()">${t('taskDetail.close')}</button>
-                        <button class="btn btn-secondary" onclick="deleteCurrentTask()" style="background: #ef4444; color: white;">${t('taskDetail.delete')}</button>
-                        <button class="btn btn-secondary" onclick="archiveCurrentTask()" style="background: #f59e0b; color: white;">${t('taskDetail.archive')}</button>
-                        <button class="btn btn-primary" id="editTaskBtn" onclick="editCurrentTask()">${t('taskDetail.edit')}</button>
-                    `;
-                }
+            if (taskModal && taskModal.classList.contains('active') && currentDetailTask) {
+                showTaskDetail(currentDetailTask, { rerender: true });
             }
         }
 

@@ -92,9 +92,9 @@
         }
 
         async function archiveCurrentTask() {
-            if (!currentDetailTask || !guardWritable()) return;
-            const task = tasks.includes(currentDetailTask) ? currentDetailTask : tasks.find(x => x.id === currentDetailTask.id);
-            if (!task) return;
+            if (!currentDetailTask || wasArchiveModalActive || !guardWritable()) return;
+            const task = tasks.includes(currentDetailTask) ? currentDetailTask : null;
+            if (!task) { showNotification(t('notif.staleList'), 'error'); return; }
             if (!confirm(t('confirm.archiveTask', { title: task.title }))) return;
             closeModal(); // nothing of this task can be edited while it is being archived
             const r = await archiveTask(task);
@@ -180,8 +180,8 @@
         }
 
         function deleteCurrentTask() {
-            if (!currentDetailTask) return;
-            deleteTask(currentDetailTask, wasArchiveModalActive);
+            if (!currentDetailTask || wasArchiveModalActive) return; // the archived dialog is read-only
+            deleteTask(currentDetailTask, false);
         }
 
         // Delete one task. `target` is the task OBJECT (an id is accepted for compatibility):

@@ -251,6 +251,80 @@ describe('review round 3', () => {
   });
 });
 
+describe('review round 4', () => {
+  it('switching language keeps the archived-task dialog read-only; nothing reaches the board twin', async ({ page }) => {
+    const both = task(7, 'twin', SUB, 'done');
+    await createDir(page, 'p', { 'kanban.md': board(both, { lastId: 7 }), 'archive.md': archive(both) });
+    await openFolder(page, 'p');
+    const kb = await readFile(page, 'p', 'kanban.md');
+    await page.click('#archiveBtn');
+    await page.waitForSelector('.archive-card');
+    await page.click('.archive-card strong');
+    await page.waitForSelector('#taskModal.active');
+    await page.selectOption('#languageSelector', 'ja');
+    assert.equal(await page.$$eval('#taskModalActions button', (b) => b.length), 1, 'only "close"');
+    assert.equal(await page.textContent('#taskModalActions button'), '閉じる');
+    // Even when called directly, edit / archive / delete do nothing from the archived dialog.
+    await page.evaluate(() => { editCurrentTask(); archiveCurrentTask(); deleteCurrentTask(); });
+    await waitIdle(page);
+    assert.equal(await page.isVisible('#newTaskModal'), false);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), kb);
+    // The board dialog still gets its actions after a language change.
+    await page.click('#taskModal .close-btn');
+    await page.click('#archiveModal .close-btn');
+    await page.click('[data-task-id="TASK-007"] .task-title');
+    await page.selectOption('#languageSelector', 'en');
+    assert.equal(await page.$$eval('#taskModalActions button', (b) => b.length), 4);
+  });
+
+  it('the form refuses to save a task whose edited object is no longer on the board', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'x'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.evaluate(() => { tasks.splice(0, 1, { ...tasks[0] }); }); // same id, different object
+    await page.fill('#taskTitle', 'changed');
+    await page.click('#taskFormSubmitBtn');
+    assert.match(await notificationText(page), /out of date/);
+    assert.equal(await page.evaluate(() => tasks[0].title), 'x');
+  });
+
+  it('an EMPTY kanban.md is not rewritten without confirmation', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': '' });
+    dialogs.queue.push(false);
+    await page.evaluate(() => { window.__mockFS.nextPick = window.__mockFS.dir('p'); });
+    await page.click('#selectFolderBtn');
+    await page.waitForTimeout(150);
+    assert.match(dialogs.seen.at(-1).message, /EMPTY/);
+    assert.deepEqual(await page.evaluate(() => window.__mockFS.files('p')), ['kanban.md']);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), '');
+    // Confirmed → initialised, no "v1 backup" of the empty file.
+    await openFolder(page, 'p');
+    assert.deepEqual(await page.evaluate(() => window.__mockFS.files('p')), ['archive.md', 'kanban.md']);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /<!-- Format: v2 -->/);
+  });
+
+  it('links keep "&" in query strings and mailto', async ({ page }) => {
+    const desc = '[q](https://example.com/search?q=a&lang=ja) [m](mailto:a@example.com?subject=x&body=y)';
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'x', desc), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('[data-task-id="TASK-001"] .task-title');
+    const hrefs = await page.$$eval('#modalBody a', (as) => as.map((a) => a.getAttribute('href')));
+    assert.deepEqual(hrefs, ['https://example.com/search?q=a&lang=ja', 'mailto:a@example.com?subject=x&body=y']);
+  });
+
+  it('the form refuses an unclosed code block', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'x'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    const before = await readFile(page, 'p', 'kanban.md');
+    await page.click('.task-edit-btn');
+    await page.fill('#taskNotes', '```\nno end');
+    await page.click('#taskFormSubmitBtn');
+    assert.match(dialogs.seen.at(-1).message, /read back as something else/);
+    await waitIdle(page);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), before);
+  });
+});
+
 describe('recent projects (real IndexedDB)', () => {
   it('the list is updated on every save, rename and second project (review A-4)', async ({ page }) => {
     const res = await page.evaluate(async () => {

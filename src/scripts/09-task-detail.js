@@ -1,4 +1,6 @@
-        function showTaskDetail(task) {
+        // opts.rerender: refresh the open dialog (e.g. language change) keeping whether it shows an
+        // archived task.
+        function showTaskDetail(task, opts = {}) {
             currentDetailTask = task;
             const actions = document.getElementById('taskModalActions');
             const modal = document.getElementById('taskModal');
@@ -8,7 +10,7 @@
             let actionsHtml = `<button class="btn btn-secondary" onclick="closeModal()">${t('taskDetail.close')}</button>`;
 
             // If coming from the archiveModal, hide: archive, edit, and delete buttons
-            wasArchiveModalActive = archiveModal.classList.contains('active');
+            if (!opts.rerender) wasArchiveModalActive = archiveModal.classList.contains('active');
             if (wasArchiveModalActive) {
                 archiveModal.classList.remove('active');
             }
@@ -171,10 +173,12 @@
         }
 
         function editCurrentTask() {
-            if (currentDetailTask) {
-                closeModal();
-                openTaskModal(currentDetailTask);
-            }
+            // Only a task that is ON THE BOARD can be edited (never an archived task, never another
+            // task with the same id).
+            if (!currentDetailTask || wasArchiveModalActive || !tasks.includes(currentDetailTask)) return;
+            const task = currentDetailTask;
+            closeModal();
+            openTaskModal(task);
         }
 
         // The task shown in the detail dialog, by object identity (duplicate ids must not make an
@@ -199,6 +203,9 @@
             const fromDesc = String(description || '').split('\n').find(l => head.test(l) || META_LINE_RE.test(l) || SECTION_STOP_RE.test(l))
                 || outside(description)[0];
             if (fromDesc) return fromDesc;
+            // An unclosed ``` / ~~~ block would make the file ambiguous (read-only on the next load).
+            const open = unclosedFences(String(description || '').split('\n'))[0] || unclosedFences(String(notes || '').split('\n'))[0];
+            if (open) return open;
             return (subtaskTexts || []).find(l => head.test(l)) || null;
         }
 
@@ -314,7 +321,10 @@
             if (isEditMode) {
                 // Edit existing task
                 const taskId = document.getElementById('taskEditId').value;
-                const task = (editingTask && tasks.includes(editingTask)) ? editingTask : tasks.find(t => t.id === taskId);
+                // The edited task OBJECT must still be on the board (no lookup by id: with duplicate
+                // ids or an archived copy it could hit another task).
+                const task = (editingTask && tasks.includes(editingTask)) ? editingTask : null;
+                if (!task) { showNotification(t('notif.staleList'), 'error'); return; }
                 if (task) {
                     task.title = title;
                     task.status = status;

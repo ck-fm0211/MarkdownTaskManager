@@ -84,8 +84,15 @@
                 return false;
             }
             // A folder without kanban.md is only initialised after confirmation (e.g. the app
-            // folder picked by mistake must not silently receive data files).
-            if (!kanban.exists && !confirm(t('confirm.initFolder', { name: dir.name }))) {
+            // folder picked by mistake must not silently receive data files). An EMPTY kanban.md is
+            // treated the same way (it may be a damaged file): never rewritten without asking.
+            if (kanban.exists && !kanban.text.trim()) {
+                if (!confirm(t('confirm.initEmptyKanban', { name: dir.name }))) {
+                    if (live()) { showBoardViews(false); updateSyncIndicator(); renderSyncBanner(); }
+                    return false;
+                }
+                kanban.exists = false; // initialise below; the safe writer accepts an empty file
+            } else if (!kanban.exists && !confirm(t('confirm.initFolder', { name: dir.name }))) {
                 if (live()) { showBoardViews(false); updateSyncIndicator(); renderSyncBanner(); }
                 return false;
             }
