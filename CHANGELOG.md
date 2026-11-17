@@ -9,6 +9,22 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes, round 3
+- Config values never span lines: an empty `**Columns**:` (or other key) no longer swallows the next
+  config line; the configuration part is also checked to read back identically after a save.
+- Duplicate config values (`#bug #bug`) no longer make a board read-only; the title may follow blank
+  lines / comments; `~~~` fences are code blocks and an unclosed fence no longer hides headings.
+- Archived-task dialog: no subtask delete / edit, and no action can reach the board task with the
+  same id.
+- New tasks are refused only while archive.md is unreadable (a readable archive with format problems
+  is fine: every `### TASK-<n>` line is counted); `tasks next-id` warns instead of failing.
+- Links containing whitespace, control characters or a backslash are refused (`/\host` == `//host`).
+- The task form keeps first-line indentation and trailing double spaces (only outer blank lines removed).
+- `release` ignores untracked files when checking for uncommitted changes.
+- Warning when `**Subtasks**:` is written after `**Notes**:` (kept as notes text).
+- Tests: the B-10 and A-4 regression tests now fail on the pre-fix code for the right reason (slow
+  backup write sampled; asynchronous isSameEntry stand-ins; slow comparison inside the transaction).
+
 ### Review fixes (external AI code reviews of the first version)
 - Archive: no edits while an archive/restore/delete runs (the detail dialog closes); the task is
   re-checked against its snapshot before it is removed from the board.
