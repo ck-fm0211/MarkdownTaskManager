@@ -30,6 +30,13 @@ function unlinkModules() {
   linkedModules = null;
 }
 function fail(msg) { unlinkModules(); console.error(`\n[復元確認 NG] ${msg}`); process.exit(1); }
+// Also on an unexpected error (the "exit" event follows an uncaught exception too) and on Ctrl+C /
+// a closed console window: with a listener, the signal does not kill this process at once; the
+// build / npm ci run by spawnSync gets it, ends, and the failure path removes the link.
+process.on('exit', unlinkModules);
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+  try { process.on(sig, () => fail(`中断されました（${sig}）`)); } catch { /* signal not available on this OS */ }
+}
 if (!zipPath) fail('使い方: npm run restore:verify -- <backup.zip> [--dest <空のフォルダー>] [--keep] [--offline]');
 
 let dest = opt('--dest');
@@ -92,7 +99,10 @@ const b = run(process.execPath, ['build.mjs', '--out', 'task-manager.restore-che
 if (b.status !== 0) {
   fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${(b.stdout + b.stderr).trim().split('\n').slice(-10).join('\n')}`);
 }
-const built = embeddedBuildInfo(readFileSync(join(dest, 'task-manager.restore-check.html'), 'utf8'));
+const builtPath = join(dest, 'task-manager.restore-check.html');
+if (!existsSync(builtPath)) fail('ビルドは終了しましたが、出力ファイル（task-manager.restore-check.html）がありません（build.mjs が作業途中の可能性）');
+const built = embeddedBuildInfo(readFileSync(builtPath, 'utf8'));
+if (!built) fail('ビルドの出力にビルド情報（mtm-build）がありません（build.mjs が作業途中の可能性）');
 console.log(`ビルド: 成功（source ${built.sourceHash}）`);
 if (manifest.build && built.sourceHash !== manifest.build.currentSourceHash) {
   fail(`ビルド結果のソースハッシュ (${built.sourceHash}) がバックアップ時 (${manifest.build.currentSourceHash}) と一致しません`);

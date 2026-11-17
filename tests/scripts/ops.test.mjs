@@ -465,4 +465,58 @@ describe('review round 6 (ops)', () => {
       assert.doesNotMatch(t, /file:\/\/\/(?!<)/, 'no absolute file URL at all');
     }
   });
+
+  test('restore:verify --reuse-node-modules removes its link also after an unexpected error (round 6: review 1-7 / 2-6)', () => {
+    const proj = projectCopy();
+    writeFileSync(join(proj, 'build.mjs'), '// builds nothing: the restore check finds no output file\n');
+    const out = tmp();
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+    const zip = join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
+    const dest = join(tmp(), 'restore');
+    const r = node(proj, 'scripts/verify-restore.mjs', [zip, '--reuse-node-modules', '--dest', dest]);
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /復元確認 NG/);
+    assert.ok(existsSync(join(dest, 'build.mjs')), 'the extracted files are kept (--dest)');
+    assert.ok(!existsSync(join(dest, 'node_modules')), 'the node_modules link was removed');
+    assert.ok(existsSync(join(ROOT, 'node_modules', 'html-minifier-terser')), 'the dev node_modules is intact');
+  });
+
+  test('restore:verify --reuse-node-modules removes its link on Ctrl+C (round 6: review 2-6)', { skip: isWin && 'POSIX process groups', timeout: 120000 }, async () => {
+    const proj = projectCopy();
+    writeFileSync(join(proj, 'build.mjs'), 'setInterval(() => {}, 1000); // a build that never ends\n');
+    const out = tmp();
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+    const zip = join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
+    const dest = join(tmp(), 'restore');
+    // Own process group, like a console window: Ctrl+C sends SIGINT to the script AND the build.
+    const child = spawn(process.execPath, ['scripts/verify-restore.mjs', zip, '--reuse-node-modules', '--dest', dest], { cwd: proj, detached: true, stdio: 'ignore' });
+    const exited = new Promise((res) => child.on('exit', (code, signal) => res({ code, signal })));
+    const deadline = Date.now() + 60000;
+    while (!existsSync(join(dest, 'node_modules')) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50));
+    assert.ok(existsSync(join(dest, 'node_modules')), 'the link was made');
+    await new Promise((res) => setTimeout(res, 500)); // the build is running
+    let done = null;
+    exited.then((v) => { done = v; });
+    while (!done && Date.now() < deadline) {
+      try { process.kill(-child.pid, 'SIGINT'); } catch { /* already gone */ }
+      await new Promise((res) => setTimeout(res, 300));
+    }
+    assert.ok(done, 'the script ended');
+    assert.ok(!existsSync(join(dest, 'node_modules')), 'the node_modules link was removed');
+    assert.ok(existsSync(join(ROOT, 'node_modules', 'html-minifier-terser')), 'the dev node_modules is intact');
+  });
+  test('tasks next-id stops (exit 1, no id) when a file is not UTF-8, e.g. a UTF-16 archive.md (round 6: review 2-1)', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'kanban.md'), '# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n');
+    // UTF-16LE with BOM (Windows PowerShell 5.1 Out-File / ">"): the "### TASK-004" line is not readable as UTF-8.
+    const archiveMd = '# Task Archive\n<!-- Format: v2 -->\n\n## Archives\n\n### TASK-004 | d\n**Status**: done\n';
+    writeFileSync(join(dir, 'archive.md'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(archiveMd, 'utf16le')]));
+    const r = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
+    assert.equal(r.code, 1, r.out);
+    assert.doesNotMatch(r.out, /TASK-00\d/, 'no id is printed');
+    assert.match(r.out, /archive\.md.*UTF-8/);
+    const c = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(c.code, 1, c.out);
+    assert.doesNotMatch(c.out, /次の ID: TASK-004/, 'check does not offer an id that may be in use');
+  });
 });
