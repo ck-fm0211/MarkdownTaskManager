@@ -69,7 +69,8 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
 
 - 配備元 `A\task-manager.html` が**現在のソースからビルドされたもの**か確認します（HTML に埋め込んだ
   ソースハッシュで判定）。ビルド失敗・未ビルドなら配備しません（`--allow-stale` で強制可）。
-- 配備先が未設定・存在しない・C と同じ・`kanban.md` を含む場合は、何もせずに停止して理由を表示します。
+- 配備先が未設定・存在しない・C と同じ・`kanban.md` を含む場合、また既存の HTML があるのに `backupDir` が未設定の場合は、
+  何もせずに停止して理由を表示します（配備先には `task-manager.html` 以外のファイルを作りません）。
 - 既存の `B\task-manager.html` を `D\html\task-manager.<日時>.<旧ハッシュ>.html` に**コピーして内容を確認してから**、
   一時ファイル経由で置き換え、置き換え後の内容を読み戻して一致を確認します。どこかで失敗したら「配備失敗／中止」と表示し、
   成功とは表示しません。
@@ -84,11 +85,15 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
 - 含めるもの: `src/`、`build.mjs`、`package.json`、`package-lock.json`、`task-manager.html`、ドキュメント、LICENSE、
   テスト、`AGENTS.md`、`AI_WORKFLOW.md`、`.claude/` などの AI 用設定、`scripts/`、`tools/`、`.gitignore` などの隠しファイル。
 - 除外するもの: `node_modules`、キャッシュ・ログ・一時ファイル、過去の ZIP（`backups/`・`dist/`・出力先自身）、
-  `.env`・鍵ファイル・`.npmrc` などの秘密情報らしきファイル、設定された運用データフォルダー。
+  `.env`・鍵ファイル・`.npmrc`・`.claude/settings.local.json`（許可コマンドにトークンが含まれ得る）などの秘密情報らしきファイル、
+  設定された運用データフォルダー、復元した ZIP に入っていた `_backup_info/`（新しいものを作り直します）、
+  Git worktree の `.git` ファイル。
 - **Git 履歴（`.git`）は既定で含めません。** この ZIP はソースの復元用で、Git 履歴は含みません。
   履歴も残したいときは `npm run backup -- --include-git`。
-- `local.config.json`（個別 PC 設定）は、**ローカル保管用のバックアップには含めます**（同じ PC で復元しやすくするため）。
-  含めたくないときは `--no-local-config`。公開用の `npm run release` には決して含めません。
+- `local.config.json`（個別 PC 設定。フォルダーのパスのみ）は、**ローカル保管用のバックアップには含めます**（同じ PC で
+  復元しやすくするため）。含めたくないときは `--no-local-config`。公開用の `npm run release` には決して含めません。
+- `npm run release`（公開用 ZIP）は、Git 管理下のファイルだけを対象にし、**未コミットの変更があると作成を拒否します**
+  （作業中の内容が公開されるのを防ぐため。確認のうえ強制する場合のみ `--allow-dirty`）。
 - ZIP は `.partial` として書き、全エントリーを読み戻して内容を照合してから正式な名前に変えます。
   失敗したら `.partial` は削除され、有効なバックアップと誤認されるファイルは残りません。同名がある場合は `-2` などを付け、上書きしません。
 - 古い世代は自動削除しません。D の容量を見て手動で整理してください。

@@ -198,6 +198,11 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
 - Task ids are unique across `kanban.md` **and** `archive.md`. Get a new one with
   `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids.
   Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
+- Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
+  `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is
+  notes (a `**Subtasks**:` written after it is not a subtask list). No `## ` headings after `## Tasks`.
+- Keep the header / configuration part to the known lines (title, `<!-- … -->` comments, `**Columns**`,
+  `**Categories**`, `**Users**`, `**Priorities**`, `**Tags**`); anything else makes the board read-only.
 - `**Status**:` must be a column **id** from `**Columns**` (the part in parentheses). An unknown
   value is kept as written and shown in the first column with a warning.
 - Japanese (or any language) is fine for titles, descriptions, notes, tags (`#経理`), categories,

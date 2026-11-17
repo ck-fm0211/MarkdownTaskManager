@@ -58,8 +58,9 @@ npm run check       # build → test
 
 ブラウザーテストは `playwright-core`（devDependency。ブラウザー本体はダウンロードしない）で、次の順に起動を試みます:
 環境変数 `MTM_BROWSER_PATH`（実行ファイル）→ `MTM_BROWSER_CHANNEL`（`msedge` / `chrome`）→ Playwright のブラウザー →
-インストール済みの Microsoft Edge → Google Chrome。どれも起動できなければスキップとして報告します。
-会社 PC では通常そのまま Edge で動きます。
+インストール済みの Microsoft Edge → Google Chrome。どれも起動できない場合、`npm test` ではスキップ（警告を表示）、
+`npm run test:e2e` では**失敗**になります。会社 PC では通常そのまま Edge で動きます。
+`file://` を開けない環境では、自動で `http://127.0.0.1` から配信して実行します（`MTM_TEST_HTTP=1` で常にこの方式）。
 
 ブラウザーテストは実フォルダーではなく、File System Access API のモック（`tests/e2e/helpers.mjs`）を使います。
 読み込み失敗・書き込み失敗・遅延・外部編集・ファイル削除を注入できます。実フォルダー・OneDrive での確認は [TESTING.md](TESTING.md) の手順で行います。

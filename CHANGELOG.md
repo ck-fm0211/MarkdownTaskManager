@@ -9,6 +9,38 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes (external AI code reviews of the first version)
+- Archive: no edits while an archive/restore/delete runs (the detail dialog closes); the task is
+  re-checked against its snapshot before it is removed from the board.
+- Restore/archive decide "identical copy already at the destination" from the file ON DISK, never from
+  unsaved in-memory state (a restore could otherwise delete the only saved copy).
+- Header/configuration part is verified by a parse → generate round-trip: unknown lines, a second
+  `**Columns**`, unsupported keys are reported (read-only) instead of silently replaced; extra HTML
+  comments are kept; `## ⚙ Configuration` without the variation selector, `**Key** :` and `#`-less
+  config tags are read; a UTF-8 BOM no longer hides the title.
+- Every task must read back identically after a save (fixed point); `**Subtasks**:` written after
+  `**Notes**:` stays in the notes (it multiplied on every save); `## ` headings in the task area are
+  reported; nested subtask indentation, trailing double spaces, full-width `：`/`＃` and `、`-separated
+  tags are kept; empty optional fields no longer make a board read-only; column names may contain
+  parentheses (the id is the last `( )`).
+- XSS: the language label of a fenced code block was inserted unescaped (upstream code) — escaped;
+  `//host` links refused, `rel="noopener noreferrer"` added.
+- Delete / form edit / subtask actions work on the clicked task object (duplicate ids no longer hit the
+  first task with that id); stale archive list actions are reported.
+- New tasks are refused while archive.md cannot be read completely; new ids also consider every
+  `### TASK-<n>` line of both files.
+- Recent-projects list: the IndexedDB write no longer awaits isSameEntry() inside the transaction
+  (TransactionInactiveError — renames and second projects were not saved); rename reports failures.
+- V1→V2 migration: backup + rewrite in one queued job; an existing different backup is never trusted
+  or overwritten.
+- Ops: `_backup_info/` of a restored ZIP and a worktree `.git` file are not packed; duplicate ZIP
+  entry names are refused; `.claude/settings.local.json` is never packed; `release` refuses
+  uncommitted changes (`--allow-dirty`); deploy needs `backupDir` to replace an existing HTML (nothing
+  else is created in the app folder); `restore:verify` runs Node without a shell (Windows paths with
+  spaces); `.cmd` wrappers no longer print the failure line on success.
+- Tests: `npm run test:e2e` fails instead of skipping without a browser; file:// falls back to a
+  localhost server; real IndexedDB and real focus-event tests; regression tests for every item above.
+
 ### Data safety (safe save with external editors / AI)
 - New save layer (`src/scripts/14-sync.js`): each file keeps the exact text last read/written; before
   every write the file is re-read and compared by **content**. A difference stops saving (conflict) —
