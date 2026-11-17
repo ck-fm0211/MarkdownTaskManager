@@ -276,14 +276,18 @@
 
         // Try to restore previous directory on page load
         async function tryRestorePreviousDirectory() {
+            // The request number is taken BEFORE the first await: a folder the user starts to choose
+            // while the recent-projects list is still loading is a newer request and wins (taken
+            // after the list, the startup restore would overtake the user's choice and drop it).
+            const overtaken = newProjectRequest();
             const savedHandle = await loadDirectoryHandle();
+            if (overtaken() || session) { await updateProjectSelector(); return !!session; }
             console.log('Attempting to restore previous directory:', savedHandle ? savedHandle.name : 'none');
 
             if (savedHandle) {
                 try {
                     // Verify we still have permission
                     console.log('Verifying permissions...');
-                    const overtaken = newProjectRequest();
                     const permitted = await verifyPermission(savedHandle);
                     // A folder chosen by the user while the startup permission check was pending wins.
                     if (overtaken() || session) { await updateProjectSelector(); return !!session; }

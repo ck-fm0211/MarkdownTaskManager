@@ -612,3 +612,30 @@ describe('review round 6: task form', () => {
     assert.match(await readFile(page, 'p', 'kanban.md'), /\*\*Subtasks\*\*:\n- \[ \] step one\n- \[ \] step two\n/);
   });
 });
+
+describe('review round 6: project switching', () => {
+  it('a slow startup restore does not replace a folder the user is picking meanwhile (round 6: review 1-5)', async ({ page }) => {
+    for (const n of ['A', 'B']) {
+      await createDir(page, n, { 'kanban.md': board(task(1, `${n} task`), { lastId: 1 }), 'archive.md': archive('') });
+    }
+    await page.evaluate(() => {
+      window.__history = new Promise((r) => { window.__releaseHistory = r; });
+      window.__pick = new Promise((r) => { window.__releasePick = r; });
+      window.loadRecentProjects = async () => {
+        await window.__history; // the startup read of the recent-projects list is slow
+        return [{ handle: window.__mockFS.dir('A'), name: 'A', customName: '', lastAccessed: Date.now() }];
+      };
+      window.showDirectoryPicker = async () => { await window.__pick; return window.__mockFS.dir('B'); };
+      window.__restore = tryRestorePreviousDirectory(); // startup: waits for the list
+    });
+    await page.click('#selectFolderBtn'); // the user picks B (the picker is still open)
+    await page.evaluate(() => window.__releaseHistory()); // the list arrives: A
+    await page.waitForTimeout(200);
+    await page.evaluate(() => window.__releasePick()); // the user chooses B
+    await page.evaluate(() => window.__restore);
+    await page.waitForFunction(() => session && session.dir.name === 'B', null, { timeout: 5000 }).catch(() => {});
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => session && session.dir.name), 'B', 'the folder the user chose is open');
+    assert.equal(await page.evaluate(() => tasks[0].title), 'B task');
+  });
+});
