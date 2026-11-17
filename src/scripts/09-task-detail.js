@@ -225,6 +225,14 @@
                 renderSyncBanner();
                 return false;
             }
+            // Not UTF-8 → its "### TASK-<n>" lines may not be readable at all (UTF-16, as written by
+            // Windows PowerShell 5.1 Out-File / ">", puts a NUL between the characters): the same as
+            // unreadable for choosing an id (a new task got the id of an archived one).
+            if (s.files.archive.notUtf8) {
+                showNotification(t('notif.archiveNotUtf8ForId'), 'error');
+                renderSyncBanner();
+                return false;
+            }
             return true;
         }
 

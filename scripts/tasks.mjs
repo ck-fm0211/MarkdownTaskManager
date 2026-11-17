@@ -52,7 +52,12 @@ if (cmd === 'where') {
   console.log(`archive.md: ${archiveText !== null ? 'あり' : 'なし'}`);
 } else if (cmd === 'next-id') {
   // Same rule as the browser: above the counter, every parsed id and every "### TASK-<n>" line
-  // (even in blocks that could not be parsed) of BOTH files.
+  // (even in blocks that could not be parsed) of BOTH files. A file that is not UTF-8 may hide
+  // its ids completely (UTF-16 puts a NUL between the characters): no id is handed out then.
+  if (notUtf8.length) {
+    console.error(`[停止] ${notUtf8.join(' / ')} が UTF-8 ではないため、使用済みの ID を確実に読めません。新しい ID は出しません。UTF-8（BOM なし）で保存し直してから実行してください（確認: npm run tasks -- check）。`);
+    process.exit(1);
+  }
   if ((k && k.problems.length) || (a && a.problems.length)) {
     console.error('[注意] 解析できない内容があります（npm run tasks -- check）。ID はファイル内のすべての「### TASK-<番号>」行を考慮して決めています。');
   }
@@ -95,7 +100,8 @@ if (cmd === 'where') {
   const maxId = F.nextTaskNumber(0, active, archived) - 1;
   if (k && k.config.lastTaskId < maxId) console.log(`  ⚠ <!-- Config: Last Task ID: ${k.config.lastTaskId} --> が最大 ID ${maxId} より小さい（ブラウザーは自動で回避します）`);
   const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
-  console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived))}`);
+  if (notUtf8.length) console.log('次の ID: （UTF-8 でないファイルがあるため決められません）');
+  else console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived))}`);
   if (bad) console.log(`\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます（保存すると失われる・化ける内容があるため）。`);
   if (toFix) console.log(`${bad ? '' : '\n'}[NG] 重複した ID が ${toFix} 件あります。ブラウザーは警告を表示して通常どおり開きますが、ドラッグ移動などが別のタスクに作用するおそれがあるため、片方を修正してください。`);
   if (!bad && !toFix) console.log('\n[OK] ブラウザーで安全に読み書きできる形式です。');

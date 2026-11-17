@@ -639,3 +639,31 @@ describe('review round 6: project switching', () => {
     assert.equal(await page.evaluate(() => tasks[0].title), 'B task');
   });
 });
+
+describe('review round 6: text encoding', () => {
+  // UTF-16LE with BOM: what Windows PowerShell 5.1 Out-File and ">" write by default.
+  const utf16le = (s) => [0xff, 0xfe, ...Array.from(new Uint8Array(new Uint16Array([...s].map((c) => c.charCodeAt(0))).buffer))];
+
+  it('a UTF-16 archive.md stops new tasks: its ids cannot be read, so no id is reused (round 6: review 2-1)', async ({ page }) => {
+    const start = board(task(3, 'C'), { lastId: 3 });
+    await createDir(page, 'p', { 'kanban.md': start });
+    await writeBytes(page, 'p', 'archive.md', utf16le(archive(task(4, 'archived D', '', 'done'))));
+    await openFolder(page, 'p');
+    await page.click('#newTaskBtn');
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), false, 'the new-task form does not open');
+    assert.match(await notificationText(page), /not UTF-8/);
+    // Also refused when the form was opened before archive.md became UTF-16 (checked again on submit).
+    await page.evaluate(() => { session.files.archive.notUtf8 = false; openTaskModal(); session.files.archive.notUtf8 = true; });
+    await page.fill('#taskTitle', '新しいタスク');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await notificationText(page), /not UTF-8/);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start, 'nothing written (TASK-004 is used in the archive)');
+    assert.deepEqual(await page.evaluate(() => tasks.map((t) => t.id)), ['TASK-003']);
+    // Existing tasks can still be edited.
+    await page.evaluate(() => closeTaskModal());
+    await page.evaluate(() => { tasks[0].title = 'C edited'; return persistKanban(); });
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-003 \| C edited/);
+  });
+});
