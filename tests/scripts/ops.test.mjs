@@ -257,6 +257,18 @@ describe('review fixes (ops)', () => {
     assert.equal(node(proj, 'scripts/backup.mjs', ['--release', '--allow-dirty', '--out', out], { MTM_CONFIG: join(proj, 'none.json') }).code, 0);
   });
 
+  test('release ignores untracked files (they are never packed)', () => {
+    const proj = projectCopy();
+    const git = (...a) => run(proj, 'git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...a]);
+    git('init', '-q'); git('add', '-A'); git('commit', '-q', '-m', 'snapshot');
+    writeFileSync(join(proj, 'my-notes.txt'), 'private memo');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--release', '--out', out], { MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    const names = readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip')))).map((e) => e.name);
+    assert.ok(!names.includes('my-notes.txt'));
+  });
+
   test('deploy over an existing HTML needs a backup folder; nothing is created in the app folder', () => {
     const o = opsFolders();
     writeFileSync(join(o.app, 'task-manager.html'), '<html>old</html>');

@@ -129,8 +129,10 @@ const gitInfo = hasGit ? {
 const dirty = gitInfo.available ? gitInfo.changes.length > 0 : null;
 // A public package must contain exactly what is committed: uncommitted edits (e.g. a real path or
 // a real task typed by mistake) would otherwise be published.
-if (release && dirty && !allowDirty && !dryRun) {
-  fail(`未コミットの変更があるため公開用 ZIP を作りません（${gitInfo.changes.length} 件）。コミットしてから実行してください（確認のうえ強制する場合のみ --allow-dirty）。\n${gitInfo.changes.slice(0, 10).join('\n')}`);
+// Untracked files never go into a release (tracked files only), so only changes to TRACKED files count.
+const trackedChanges = release && gitInfo.available ? (git('status', '--porcelain', '--untracked-files=no') || '').split('\n').filter(Boolean) : [];
+if (release && trackedChanges.length && !allowDirty && !dryRun) {
+  fail(`未コミットの変更があるため公開用 ZIP を作りません（${trackedChanges.length} 件）。コミットしてから実行してください（確認のうえ強制する場合のみ --allow-dirty）。\n${trackedChanges.slice(0, 10).join('\n')}`);
 }
 if (release && !gitInfo.available) console.warn('[注意] Git 情報がないため、公開用 ZIP は除外ルールだけで作成します。内容を確認してから配布してください。');
 
