@@ -14,7 +14,11 @@ before(async () => {
   const r = await launchBrowser();
   browser = r.browser;
   skipReason = r.reason || '';
-  if (!browser) console.warn(`[e2e] SKIP: ${skipReason}`);
+  if (!browser) {
+    // `npm run test:e2e` sets MTM_REQUIRE_BROWSER: there a missing browser is a FAILURE, not a skip.
+    if (process.env.MTM_REQUIRE_BROWSER) throw new Error(`ブラウザーテストを実行できません: ${skipReason}`);
+    console.warn(`[e2e] SKIP（ブラウザーなし。npm test は成功表示になりますが、ブラウザーテストは未実行です）: ${skipReason}`);
+  }
 });
 after(async () => { if (browser) await browser.close(); });
 

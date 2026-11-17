@@ -37,13 +37,18 @@
                 if (reason) { showNotification(reason, 'error'); renderSyncBanner(); return { ok: false, reason }; }
                 return enqueueWrite(async () => {
                     if (s !== session || !tasks.includes(task)) return { ok: false, reason: 'stale' };
+                    // Snapshot: exactly this content is archived. Edits are blocked while the
+                    // operation runs (guardWritable); the snapshot is re-checked before the task
+                    // is removed from the board, as a second line of defence.
+                    const snapshot = serializeTask(task);
                     try {
                         await assertUnchanged(s, 'archive');
                         await assertUnchanged(s, 'kanban');
                     } catch (e) { handleSyncError(s, e); return { ok: false, reason: e.kind }; }
 
-                    // Destination: archive.md
-                    const same = archivedTasks.filter(a => a.id === task.id);
+                    // Destination: archive.md — decided on what is ON DISK (== baseline, just checked).
+                    const diskArchive = s.files.archive.baseline === null ? [] : parseArchiveContent(s.files.archive.baseline).tasks;
+                    const same = diskArchive.filter(a => a.id === task.id);
                     let skippedDestination = false;
                     if (same.length) {
                         if (!same.every(a => sameTask(a, task))) {
@@ -64,6 +69,10 @@
                     }
 
                     // Source: kanban.md
+                    if (serializeTask(task) !== snapshot) {
+                        showNotification(t('notif.changedDuringOperation', { id: task.id }), 'error');
+                        return { ok: false, partial: true, reason: 'changed' };
+                    }
                     const seq = s.editSeq;
                     const remaining = tasks.filter(x => x !== task);
                     try {
@@ -84,17 +93,15 @@
 
         async function archiveCurrentTask() {
             if (!currentDetailTask || !guardWritable()) return;
-            const task = tasks.find(x => x === currentDetailTask) || tasks.find(x => x.id === currentDetailTask.id);
+            const task = tasks.includes(currentDetailTask) ? currentDetailTask : tasks.find(x => x.id === currentDetailTask.id);
             if (!task) return;
             if (!confirm(t('confirm.archiveTask', { title: task.title }))) return;
+            closeModal(); // nothing of this task can be edited while it is being archived
             const r = await archiveTask(task);
             if (!r) return;
             updateAutocomplete();
             renderKanban();
-            if (r.ok) {
-                closeModal();
-                showNotification(t('notif.taskArchived'), 'success');
-            }
+            if (r.ok) showNotification(t('notif.taskArchived'), 'success');
         }
 
         // Restore one archived task (exact object of archivedTasks[]).
@@ -118,25 +125,26 @@
                         restored.status = config.columns[0]?.id || 'todo';
                     }
 
-                    // Destination: kanban.md
-                    const same = tasks.filter(a => a.id === task.id);
-                    let skippedDestination = false;
-                    if (same.length) {
-                        if (!same.every(a => sameTask(a, restored))) {
-                            showNotification(t('notif.duplicateDifferent', { id: task.id, file: 'kanban.md' }), 'error');
-                            return { ok: false, reason: 'duplicate-different' };
-                        }
-                        skippedDestination = true;
-                    } else {
+                    // Destination: kanban.md. The board in memory may hold UNSAVED changes, so the
+                    // write is skipped only when an identical copy is really ON DISK.
+                    const inMemory = tasks.filter(a => a.id === task.id);
+                    if (inMemory.some(a => !sameTask(a, restored))) {
+                        showNotification(t('notif.duplicateDifferent', { id: task.id, file: 'kanban.md' }), 'error');
+                        return { ok: false, reason: 'duplicate-different' };
+                    }
+                    const onDisk = parseKanbanContent(s.files.kanban.baseline).tasks.filter(a => a.id === task.id);
+                    const skippedDestination = inMemory.length > 0 && onDisk.length > 0 && onDisk.every(a => sameTask(a, restored));
+                    if (!skippedDestination) {
                         const seq = s.editSeq;
+                        const next = inMemory.length ? tasks : [...tasks, restored];
                         try {
-                            await writeFileChecked(s, 'kanban', generateKanbanContent(config, [...tasks, restored], s.files.kanban.eol));
+                            await writeFileChecked(s, 'kanban', generateKanbanContent(config, next, s.files.kanban.eol));
                         } catch (e) {
                             handleSyncError(s, e);
                             showNotification(t('notif.restoreFailed', { id: task.id }), 'error');
                             return { ok: false, reason: e.kind };
                         }
-                        tasks.push(restored);
+                        if (!inMemory.length) tasks.push(restored);
                         if (s.editSeq === seq) s.savedSeq = seq; else s.editSeq++;
                     }
 
@@ -155,28 +163,37 @@
             });
         }
 
-        async function unarchiveTask(taskId) {
+        async function restoreFromList(task) {
             if (!guardWritable()) return;
-            const task = archivedTasks.find(x => x.id === taskId);
-            if (!task) return;
             const r = await unarchiveTaskObject(task);
             if (!r) return;
+            if (r.reason === 'stale') showNotification(t('notif.staleList'), 'error');
             updateAutocomplete();
             renderKanban();
             renderArchiveList(document.getElementById('archiveSearch').value);
             if (r.ok) showNotification(t('notif.taskRestored'), 'success');
         }
 
-        function deleteCurrentTask() {
-            if (!currentDetailTask) return;
-            deleteTask(currentDetailTask.id, false);
+        async function unarchiveTask(taskId) {
+            const task = archivedTasks.find(x => x.id === taskId);
+            if (task) await restoreFromList(task);
         }
 
-        async function deleteTask(taskId, fromArchive = false) {
+        function deleteCurrentTask() {
+            if (!currentDetailTask) return;
+            deleteTask(currentDetailTask, wasArchiveModalActive);
+        }
+
+        // Delete one task. `target` is the task OBJECT (an id is accepted for compatibility):
+        // with duplicate ids, the clicked task is deleted — never "the first one with that id".
+        async function deleteTask(target, fromArchive = false) {
             if (!guardWritable()) return;
             const taskList = fromArchive ? archivedTasks : tasks;
-            const task = taskList.find(x => x.id === taskId);
-            if (!task) return;
+            const task = typeof target === 'object' ? target : taskList.find(x => x.id === target);
+            if (!task || !taskList.includes(task)) {
+                if (task) { showNotification(t('notif.staleList'), 'error'); if (fromArchive) renderArchiveList(document.getElementById('archiveSearch').value); }
+                return;
+            }
 
             const confirmMessage = fromArchive
                 ? t('confirm.deleteTask', { title: task.title })
@@ -199,7 +216,7 @@
                 const reason = archiveUnavailableReason(s);
                 if (reason) { showNotification(reason, 'error'); return { ok: false }; }
                 return enqueueWrite(async () => {
-                    if (s !== session || !archivedTasks.includes(task)) return { ok: false };
+                    if (s !== session || !archivedTasks.includes(task)) return { ok: false, reason: 'stale' };
                     const remaining = archivedTasks.filter(x => x !== task);
                     try {
                         await writeFileChecked(s, 'archive', archiveContentFor(remaining));
@@ -208,6 +225,7 @@
                     return { ok: true };
                 });
             });
+            if (r && r.reason === 'stale') showNotification(t('notif.staleList'), 'error');
             renderArchiveList(document.getElementById('archiveSearch').value);
             if (r && r.ok) showNotification(t('notif.taskDeleted'), 'success');
         }
@@ -260,17 +278,8 @@
             list.querySelectorAll('.archive-card').forEach(card => {
                 const task = archivedTasks[+card.dataset.archiveIndex];
                 card.addEventListener('click', () => showTaskDetail(task));
-                card.querySelector('[data-archive-action="delete"]').addEventListener('click', (e) => { e.stopPropagation(); deleteTask(task.id, true); });
-                card.querySelector('[data-archive-action="restore"]').addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    if (!guardWritable()) return;
-                    const r = await unarchiveTaskObject(task);
-                    if (!r) return;
-                    updateAutocomplete();
-                    renderKanban();
-                    renderArchiveList(document.getElementById('archiveSearch').value);
-                    if (r.ok) showNotification(t('notif.taskRestored'), 'success');
-                });
+                card.querySelector('[data-archive-action="delete"]').addEventListener('click', (e) => { e.stopPropagation(); deleteTask(task, true); });
+                card.querySelector('[data-archive-action="restore"]').addEventListener('click', (e) => { e.stopPropagation(); restoreFromList(task); });
             });
         }
 

@@ -1,13 +1,36 @@
 // Browser test helpers: run the BUILT task-manager.html in Chromium/Edge with an in-memory mock of
 // the File System Access API (with fault injection), so data-safety behaviour can be tested
 // without real folders. Real-browser + real-OneDrive checks are manual (see docs/ja/TESTING.md).
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const HTML_URL = pathToFileURL(join(root, 'task-manager.html')).href;
+
+// Normal use opens the HTML from disk (file://). Some locked-down environments refuse file:// in
+// automated browsers: then (or with MTM_TEST_HTTP=1) the same file is served from 127.0.0.1.
+let httpUrl = null;
+async function serveOverHttp() {
+  if (httpUrl) return httpUrl;
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(readFileSync(join(root, 'task-manager.html')));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  server.unref();
+  httpUrl = `http://127.0.0.1:${server.address().port}/task-manager.html`;
+  return httpUrl;
+}
+
+async function gotoApp(page, forceHttp = false) {
+  if (!process.env.MTM_TEST_HTTP && !forceHttp) {
+    try { await page.goto(HTML_URL); return; } catch (e) { console.warn(`[e2e] file:// を開けないため localhost で配信します: ${e.message.split('\n')[0]}`); }
+  }
+  await page.goto(await serveOverHttp());
+}
 
 // Find Playwright: the project devDependency (playwright-core) or a global "playwright".
 async function loadPlaywright() {
@@ -125,14 +148,17 @@ function mockFsInit() {
   };
 }
 
-export async function newPage(browser, { locale = 'en-US', language = null } = {}) {
+export async function newPage(browser, { locale = 'en-US', language = null, http = false } = {}) {
   const context = await browser.newContext({ locale, acceptDownloads: true });
   await context.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
   const page = await context.newPage();
   const errors = [];
   const requests = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('request', (r) => { if (!r.url().startsWith('file:') && !r.url().startsWith('blob:') && !r.url().startsWith('data:')) requests.push(r.url()); });
+  page.on('request', (r) => {
+    const u = r.url();
+    if (!u.startsWith('file:') && !u.startsWith('blob:') && !u.startsWith('data:') && !(httpUrl && u === httpUrl)) requests.push(u);
+  });
   const dialogs = { queue: [], seen: [] };
   page.on('dialog', async (d) => {
     dialogs.seen.push({ type: d.type(), message: d.message() });
@@ -145,9 +171,11 @@ export async function newPage(browser, { locale = 'en-US', language = null } = {
   if (language) {
     await page.addInitScript((lang) => { localStorage.setItem('preferredLanguage', lang); }, language);
   }
-  await page.goto(HTML_URL);
+  await gotoApp(page, http);
   // Recent-projects list lives in IndexedDB, which cannot store mock handles: keep it in memory.
+  // The real functions stay available as window.__realStorage (tested with real handles).
   await page.evaluate(() => {
+    window.__realStorage = { loadRecentProjects, saveDirectoryHandle };
     window.__projects = [];
     window.loadRecentProjects = async () => window.__projects;
     window.saveDirectoryHandle = async (handle) => {

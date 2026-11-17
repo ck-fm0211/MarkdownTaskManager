@@ -223,6 +223,9 @@
         function guardWritable() {
             const s = session;
             if (!s) return false;
+            // No edits while an archive / restore / delete is running: the operation works on a
+            // snapshot of the task and must not drop a change made in the meantime.
+            if (busyOperation) { showNotification(t('notif.busy'), 'error'); return false; }
             if (s.blocked.kanban) { showNotification(t('notif.readOnly'), 'error'); renderSyncBanner(); return false; }
             if (s.conflict) { showNotification(t('notif.conflictNoEdit'), 'error'); renderSyncBanner(); return false; }
             return true;
@@ -342,8 +345,11 @@
                 if (onlyContentChanges && !isDirty(s) && !anyEditorOpen() && !s.conflict) {
                     // Nothing unsaved and nothing being edited → safe to take the disk version.
                     const archiveOpen = document.getElementById('archiveModal').classList.contains('active');
-                    await openProject(s.dir, { skipLeaveCheck: true, reload: true });
-                    if (archiveOpen) renderArchiveList(document.getElementById('archiveSearch').value);
+                    const ok = await openProject(s.dir, { skipLeaveCheck: true, reload: true });
+                    if (ok && archiveOpen) {
+                        renderArchiveList(document.getElementById('archiveSearch').value);
+                        document.getElementById('archiveModal').classList.add('active');
+                    }
                     showNotification(t('notif.reloadedExternal'), 'success');
                     return;
                 }

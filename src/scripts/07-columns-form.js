@@ -88,7 +88,9 @@
         // Task edit/create modal
         function openTaskModal(task = null, defaultColumnId = null) {
             if (!guardWritable()) return;
+            if (!task && !canCreateNewTask()) return;
             isEditMode = !!task;
+            editingTask = task;
             const modal = document.getElementById('newTaskModal');
             const form = document.getElementById('newTaskForm');
             const title = modal.querySelector('h2');
@@ -155,6 +157,7 @@
             document.getElementById('newTaskForm').reset();
             formSubtasks = [];
             isEditMode = false;
+            editingTask = null;
         }
 
         // Form subtasks management

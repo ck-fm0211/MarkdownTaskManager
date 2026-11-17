@@ -12,64 +12,53 @@
             });
         }
 
+        // Write the whole recent-projects list in its own readwrite transaction.
+        async function putRecentProjects(list) {
+            const db = await openDB();
+            const transaction = db.transaction(STORE_NAME, 'readwrite');
+            transaction.objectStore(STORE_NAME).put(list, PROJECTS_KEY);
+            await new Promise((resolve, reject) => {
+                transaction.oncomplete = resolve;
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            });
+        }
+
+        // Add / update a project in the recent list (most recent first). Returns true on success.
+        // All awaits that are not IndexedDB requests (isSameEntry, prompt) happen BEFORE the write
+        // transaction is opened: an IndexedDB transaction auto-commits as soon as the code awaits
+        // something else, and a later put() would fail with TransactionInactiveError.
         async function saveDirectoryHandle(handle, customName = null) {
             try {
-                const db = await openDB();
-                const transaction = db.transaction(STORE_NAME, 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-
-                // Get existing projects
-                const getRequest = store.get(PROJECTS_KEY);
-                const projects = await new Promise((resolve, reject) => {
-                    getRequest.onsuccess = () => resolve(getRequest.result || []);
-                    getRequest.onerror = () => reject(getRequest.error);
-                });
-
-                // Get project name (directory name)
+                const projects = await loadRecentProjects();
                 const projectName = handle.name;
 
-                // Check if project already exists. Identity = the same folder (isSameEntry), not just
-                // the same folder NAME: two different folders called "data" must stay two projects.
+                // Identity = the same folder (isSameEntry), not just the same folder NAME: two
+                // different folders called "data" must stay two projects.
                 const existingIndex = await findProjectIndex(projects, handle);
-                const isNewProject = existingIndex < 0;
+                const existing = existingIndex >= 0 ? projects[existingIndex] : null;
 
-                // Ask for custom name for new projects if not provided
+                // Ask for a custom name for new projects if not provided
                 let finalCustomName = customName;
-                if (isNewProject && !customName) {
+                if (!existing && customName === null) {
                     finalCustomName = prompt(t('prompt.projectName', {name: projectName})) || '';
                 }
 
                 const projectData = {
                     handle: handle,
                     name: projectName,
-                    customName: finalCustomName || (existingIndex >= 0 ? projects[existingIndex].customName : ''),
+                    customName: finalCustomName !== null ? finalCustomName : (existing ? existing.customName : ''),
                     lastAccessed: Date.now()
                 };
-
-                if (existingIndex >= 0) {
-                    // Update existing project (keep custom name if not changing)
-                    projectData.customName = customName !== null ? customName : projects[existingIndex].customName;
-                    projects[existingIndex] = projectData;
-                } else {
-                    // Add new project at the beginning
-                    projects.unshift(projectData);
-                }
-
-                // Keep only MAX_RECENT_PROJECTS
-                const recentProjects = projects.slice(0, MAX_RECENT_PROJECTS);
-
-                // Save updated list
-                store.put(recentProjects, PROJECTS_KEY);
-
-                await new Promise((resolve, reject) => {
-                    transaction.oncomplete = resolve;
-                    transaction.onerror = () => reject(transaction.error);
-                });
+                const rest = projects.filter((p, i) => i !== existingIndex);
+                await putRecentProjects([projectData, ...rest].slice(0, MAX_RECENT_PROJECTS));
 
                 console.log('Project saved to recent list:', projectData.customName || projectName);
-                updateProjectSelector();
+                await updateProjectSelector();
+                return true;
             } catch (error) {
                 console.error('Failed to save directory handle:', error);
+                return false;
             }
         }
 
@@ -190,7 +179,7 @@
                 }
                 const ok = await openProject(project.handle, { skipLeaveCheck: true });
                 if (ok) {
-                    await saveDirectoryHandle(project.handle);
+                    if (!(await saveDirectoryHandle(project.handle))) console.warn('recent-projects list not updated');
                     showNotification(t('notif.projectLoaded', {name: project.customName || project.name}), 'success');
                 }
                 await updateProjectSelector();
@@ -214,8 +203,11 @@
                     const newName = prompt(t('prompt.renameProject'), currentName);
 
                     if (newName !== null && newName.trim() !== currentName) {
-                        await saveDirectoryHandle(directoryHandle, newName.trim());
-                        showNotification(t('notif.projectRenamed'), 'success');
+                        if (await saveDirectoryHandle(directoryHandle, newName.trim())) {
+                            showNotification(t('notif.projectRenamed'), 'success');
+                        } else {
+                            showNotification(t('notif.renameError'), 'error');
+                        }
                     }
                 }
             } catch (error) {
@@ -242,15 +234,7 @@
                         const updatedProjects = projects.filter(p => p !== currentProject);
 
                         // Save updated list to IndexedDB
-                        const db = await openDB();
-                        const transaction = db.transaction(STORE_NAME, 'readwrite');
-                        const store = transaction.objectStore(STORE_NAME);
-                        store.put(updatedProjects, PROJECTS_KEY);
-
-                        await new Promise((resolve, reject) => {
-                            transaction.oncomplete = resolve;
-                            transaction.onerror = () => reject(transaction.error);
-                        });
+                        await putRecentProjects(updatedProjects);
 
                         // Clear current project (new generation → late async work is ignored)
                         projectGen++;
@@ -327,7 +311,7 @@
                 const picked = await window.showDirectoryPicker({ ...options, mode: 'readwrite' });
                 if (!(await confirmLeaveCurrent())) return;
                 const ok = await openProject(picked, { skipLeaveCheck: true });
-                if (ok) await saveDirectoryHandle(picked); // Save for next time
+                if (ok && !(await saveDirectoryHandle(picked))) showNotification(t('notif.historyError'), 'error'); // Save for next time
 
                 // Update project selector now that kanban is visible
                 await updateProjectSelector();

@@ -21,6 +21,7 @@
             wasArchiveModalActive = false;
             currentDetailTask = null;
             isEditMode = false;
+            editingTask = null;
             formSubtasks = [];
         }
 
@@ -164,30 +165,38 @@
             return live();
         }
 
-        // One-time V1 → V2 rewrites. Only when the parse was complete (no problems) and a backup
-        // of the original could be written first.
-        async function migrateLegacyFiles(s) {
-            if (s !== session) return;
-            if (!loadedFormatV2 && !s.blocked.kanban) {
-                const original = s.files.kanban.baseline;
-                if (await backupOriginal(s, 'kanban.md', original) && await autoSave()) {
-                    console.log('Migrated kanban.md from V1 (sections) to V2 (status field)');
-                } else {
-                    console.warn('Skipped V1→V2 migration of kanban.md (backup or save failed). File left unchanged.');
-                }
-            }
-            if (s !== session) return;
-            if (!loadedArchiveV2 && archivedTasks.length > 0 && !s.blocked.archive && s.files.archive.baseline !== null) {
-                const original = s.files.archive.baseline;
-                if (await backupOriginal(s, 'archive.md', original)) {
-                    await enqueueWrite(async () => {
-                        try {
+        // One-time V1 → V2 rewrites. Only when the parse was complete (no problems), and only after
+        // a verified backup of the original exists. Backup + rewrite run as ONE job in the write
+        // queue, so the page shows "saving" until everything is on disk.
+        function migrateLegacyFiles(s) {
+            if (s !== session) return Promise.resolve();
+            const doKanban = !loadedFormatV2 && !s.blocked.kanban;
+            const doArchive = !loadedArchiveV2 && archivedTasks.length > 0 && !s.blocked.archive
+                && s.files.archive.baseline !== null && s.files.archive.state === 'ok';
+            if (!doKanban && !doArchive) return Promise.resolve();
+            return enqueueWrite(async () => {
+                if (s !== session) return;
+                try {
+                    if (doKanban) {
+                        const original = s.files.kanban.baseline;
+                        if (await backupOriginal(s, 'kanban.md', original)) {
+                            const seq = s.editSeq;
+                            await writeFileChecked(s, 'kanban', generateKanbanContent(config, tasks, s.files.kanban.eol));
+                            if (s.editSeq === seq) s.savedSeq = seq;
+                            loadedFormatV2 = true;
+                            console.log('Migrated kanban.md from V1 (sections) to V2 (status field)');
+                        } else {
+                            console.warn('Skipped V1→V2 migration of kanban.md (backup failed). File left unchanged.');
+                        }
+                    }
+                    if (doArchive && s === session) {
+                        if (await backupOriginal(s, 'archive.md', s.files.archive.baseline)) {
                             await writeFileChecked(s, 'archive', generateArchiveContent(s.archivePreamble, archivedTasks, s.files.archive.eol));
                             loadedArchiveV2 = true;
-                        } catch (e) { handleSyncError(s, e); }
-                    });
-                }
-            }
+                        }
+                    }
+                } catch (e) { handleSyncError(s, e); }
+            });
         }
 
         // Re-read archive.md (e.g. when the archive list is opened) so archive edits made by an AI
@@ -254,26 +263,35 @@
 `;
         }
 
-        // One-time backup of a file's original content before a V1→V2 migration. Returns true
-        // when a usable backup exists (freshly written OR already present). Never overwrites.
+        // Backup of a file's original content before a V1→V2 migration (runs inside the write
+        // queue). Writes "<name>.v1-backup.md"; if that name exists with DIFFERENT content, a
+        // timestamped name is used instead (an old backup is never overwritten or trusted blindly).
+        // Returns true only when a backup with exactly `content` exists and was read back.
         async function backupOriginal(s, name, content) {
-            try {
-                const backupName = name.replace(/\.md$/, '.v1-backup.md');
-                try { await s.dir.getFileHandle(backupName); return true; } catch (e) {
-                    if (!e || e.name !== 'NotFoundError') return false;
+            const base = name.replace(/\.md$/, '.v1-backup');
+            for (const candidate of [`${base}.md`, `${base}-${timestampForFile()}.md`]) {
+                try {
+                    let fh = null;
+                    try { fh = await s.dir.getFileHandle(candidate); } catch (e) {
+                        if (!e || e.name !== 'NotFoundError') return false;
+                    }
+                    if (fh) {
+                        if ((await (await fh.getFile()).text()) === content) return true; // same backup already there
+                        continue; // different content → try the next (timestamped) name
+                    }
+                    fh = await s.dir.getFileHandle(candidate, { create: true });
+                    const w = await fh.createWritable();
+                    await w.write(content);
+                    await w.close();
+                    if ((await (await fh.getFile()).text()) !== content) return false;
+                    console.log('Backup written:', candidate);
+                    return true;
+                } catch (e) {
+                    console.warn('Backup failed — migration aborted to keep the original intact:', e);
+                    return false;
                 }
-                const fh = await s.dir.getFileHandle(backupName, { create: true });
-                const w = await fh.createWritable();
-                await w.write(content);
-                await w.close();
-                const back = await (await fh.getFile()).text();
-                if (back !== content) return false;
-                console.log('Backup written:', backupName);
-                return true;
-            } catch (e) {
-                console.warn('Backup failed — migration aborted to keep the original intact:', e);
-                return false;
             }
+            return false;
         }
 
         // Board serialization used by the save queue (pure generator lives in 04-format.js).

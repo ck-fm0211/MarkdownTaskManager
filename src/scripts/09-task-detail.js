@@ -175,9 +175,43 @@
             }
         }
 
+        // The task shown in the detail dialog, by object identity (duplicate ids must not make an
+        // action hit another task with the same id); falls back to the id.
+        function findActiveTask(taskId) {
+            if (currentDetailTask && currentDetailTask.id === taskId && tasks.includes(currentDetailTask)) return currentDetailTask;
+            return tasks.find(t => t.id === taskId);
+        }
+
+        // Lines that would be read back as something else (a new task, a heading of the task
+        // area, a metadata field or a section) are refused instead of writing a file that reads
+        // back differently or becomes read-only.
+        function findStructuralLine(description, notes, subtaskTexts) {
+            const head = /^\s*#{2,3}\s+TASK-/i;
+            const outside = (text) => headingsOutsideFences(String(text || '').split('\n'));
+            const fromNotes = String(notes || '').split('\n').find(l => head.test(l)) || outside(notes)[0];
+            if (fromNotes) return fromNotes;
+            const fromDesc = String(description || '').split('\n').find(l => head.test(l) || META_LINE_RE.test(l) || SECTION_STOP_RE.test(l))
+                || outside(description)[0];
+            if (fromDesc) return fromDesc;
+            return (subtaskTexts || []).find(l => head.test(l)) || null;
+        }
+
+        // A new task needs an id that is unused in kanban.md AND archive.md; refuse while
+        // archive.md cannot be read completely.
+        function canCreateNewTask() {
+            const s = session;
+            if (!s) return false;
+            if (s.files.archive.state === 'error' || s.blocked.archive) {
+                showNotification(t('notif.archiveNeededForId'), 'error');
+                renderSyncBanner();
+                return false;
+            }
+            return true;
+        }
+
         // Subtask management
         function toggleSubtask(taskId, subtaskIdx) {
-            const task = tasks.find(t => t.id === taskId);
+            const task = findActiveTask(taskId);
             if (!task || !task.subtasks[subtaskIdx]) return;
             if (!guardWritable()) { showTaskDetail(task); return; }
             task.subtasks[subtaskIdx].completed = !task.subtasks[subtaskIdx].completed;
@@ -188,7 +222,7 @@
         }
 
         function deleteSubtask(taskId, subtaskIdx) {
-            const task = tasks.find(t => t.id === taskId);
+            const task = findActiveTask(taskId);
             if (!task || !guardWritable()) return;
             if (confirm(t('confirm.deleteSubtask'))) {
                 task.subtasks.splice(subtaskIdx, 1);
@@ -204,7 +238,7 @@
             const text = input.value.trim();
             if (!text) return;
 
-            const task = tasks.find(t => t.id === taskId);
+            const task = findActiveTask(taskId);
             if (task && guardWritable()) {
                 if (/\n/.test(text)) return;
                 task.subtasks.push({ completed: false, text });
@@ -217,7 +251,7 @@
         }
 
         function editSubtask(taskId, subtaskIdx) {
-            const task = tasks.find(t => t.id === taskId);
+            const task = findActiveTask(taskId);
             if (!task || !task.subtasks[subtaskIdx]) return;
             if (!guardWritable()) return;
 
@@ -250,10 +284,7 @@
             const description = document.getElementById('taskDescription').value.trim();
             const notes = document.getElementById('taskNotes').value.trim();
 
-            // A line that looks like a task header or a top-level section would split the task (or
-            // the file) on the next read. Refuse it instead of writing a file that reads back wrong.
-            const badLine = [description, notes, ...formSubtasks.map(st => st.text)]
-                .join('\n').split('\n').find(l => /^\s*#{2,3}\s+TASK-/i.test(l) || /^\s*##\s+Tasks\s*$/i.test(l));
+            const badLine = findStructuralLine(description, notes, formSubtasks.map(st => st.text));
             if (badLine) {
                 alert(t('alert.forbiddenHeading', { line: badLine.trim() }));
                 return;
@@ -267,7 +298,7 @@
             if (isEditMode) {
                 // Edit existing task
                 const taskId = document.getElementById('taskEditId').value;
-                const task = tasks.find(t => t.id === taskId);
+                const task = (editingTask && tasks.includes(editingTask)) ? editingTask : tasks.find(t => t.id === taskId);
                 if (task) {
                     task.title = title;
                     task.status = status;
@@ -288,7 +319,10 @@
             } else {
                 // Create new task. The id is above the config counter AND every id already used in
                 // kanban.md or archive.md (an AI may have added tasks without bumping the counter).
-                config.lastTaskId = nextTaskNumber(config.lastTaskId, tasks, archivedTasks);
+                if (!canCreateNewTask()) return;
+                const s = session;
+                const rawMax = Math.max(maxIdInText(s.files.kanban.baseline || ''), maxIdInText(s.files.archive.baseline || ''));
+                config.lastTaskId = nextTaskNumber(Math.max(config.lastTaskId, rawMax), tasks, archivedTasks);
                 const newTaskId = formatTaskId(config.lastTaskId);
                 tasks.push({
                     id: newTaskId,

@@ -9,6 +9,7 @@
         let activeFilters = []; // Array of {type: 'tag'|'category'|'user', value: string}
         let globalSearchTerm = ''; // Global search term (id, title, description, notes, tags, ...)
         let isEditMode = false;
+        let editingTask = null; // the task object being edited in the form (not looked up by id)
         let currentDetailTask = null;
         let formSubtasks = [];
         let archivedTasks = [];
