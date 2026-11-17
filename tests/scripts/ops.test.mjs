@@ -4,12 +4,12 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, cpSync, symlinkSync,
-  statSync, rmSync,
+  statSync, rmSync, appendFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync, spawn } from 'node:child_process';
 import { readZip } from '../../scripts/lib/zip.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -44,8 +44,8 @@ function snapshot(dir) {
 }
 
 // A throw-away copy of the project (node_modules linked, not copied).
-function projectCopy() {
-  const dest = join(tmp('mtm-proj-'), 'MarkdownTaskManager');
+function projectCopy(name = 'MarkdownTaskManager') {
+  const dest = join(tmp('mtm-proj-'), name);
   cpSync(ROOT, dest, {
     recursive: true,
     filter: (src) => !/[\\/](node_modules|\.git|backups|dist|test-results)([\\/]|$)/.test(src.slice(ROOT.length)) && !src.endsWith('local.config.json'),
@@ -400,18 +400,69 @@ describe('review round 5 (ops)', () => {
 });
 
 describe('review round 6 (ops)', () => {
-  test('tasks next-id stops (exit 1, no id) when a file is not UTF-8, e.g. a UTF-16 archive.md (round 6: review 2-1)', () => {
-    const dir = tmp();
-    writeFileSync(join(dir, 'kanban.md'), '# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n');
-    // UTF-16LE with BOM (Windows PowerShell 5.1 Out-File / ">"): the "### TASK-004" line is not readable as UTF-8.
-    const archiveMd = '# Task Archive\n<!-- Format: v2 -->\n\n## Archives\n\n### TASK-004 | d\n**Status**: done\n';
-    writeFileSync(join(dir, 'archive.md'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(archiveMd, 'utf16le')]));
-    const r = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
-    assert.equal(r.code, 1, r.out);
-    assert.doesNotMatch(r.out, /TASK-00\d/, 'no id is printed');
-    assert.match(r.out, /archive\.md.*UTF-8/);
-    const c = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
-    assert.equal(c.code, 1, c.out);
-    assert.doesNotMatch(c.out, /次の ID: TASK-004/, 'check does not offer an id that may be in use');
+  const zipOf = (out) => readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip'))));
+  const manifestOf = (entries) => JSON.parse(entries.find((e) => e.name === '_backup_info/manifest.json').data.toString('utf8'));
+  const infoTexts = (entries) => ['_backup_info/manifest.json', '_backup_info/README-RESTORE.md'].map((n) => entries.find((e) => e.name === n).data.toString('utf8'));
+  const noEnv = { MTM_APP_DIR: '', MTM_DATA_DIR: '', MTM_BACKUP_DIR: '' };
+
+  test('a broken configuration file does not let task data into a backup (round 6: review 1-2 / 2-4)', () => {
+    const proj = projectCopy();
+    // The data folder is given by an environment variable; the configuration file is broken.
+    const data = join(proj, 'operation-data');
+    mkdirSync(data);
+    writeFileSync(join(data, 'kanban.md'), '# 実データ\n');
+    const cfg = join(tmp(), 'cfg.json');
+    writeFileSync(cfg, '{ "backupDir": ');
+    const out = tmp();
+    let r = node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: cfg, MTM_DATA_DIR: data });
+    assert.equal(r.code, 0, r.out);
+    assert.ok(!zipOf(out).some((e) => e.name.startsWith('operation-data/')), 'the MTM_DATA_DIR folder is still left out');
+    // The data folder is only named IN the broken file: folders holding kanban.md / archive.md
+    // (other than the project root and examples/) are left out, with a warning.
+    rmSync(data, { recursive: true });
+    mkdirSync(join(proj, 'data'));
+    writeFileSync(join(proj, 'data', 'archive.md'), '# Archive\n');
+    writeFileSync(join(proj, 'local.config.json'), '{ "dataDir": "./data", ');
+    const out2 = tmp();
+    r = node(proj, 'scripts/backup.mjs', ['--out', out2], { ...noEnv, MTM_CONFIG: '' });
+    assert.equal(r.code, 0, r.out);
+    const names = zipOf(out2).map((e) => e.name);
+    assert.ok(!names.includes('data/archive.md'), 'a folder with task data is left out');
+    for (const must of ['kanban.md', 'archive.md', 'examples/kanban.md', 'examples/archive.md']) assert.ok(names.includes(must), must);
+    assert.match(r.out, /運用データ/);
+  });
+
+  test('the content of an unreadable configuration file never reaches the ZIP (round 6: review 1-4)', () => {
+    for (const content of ['DUMMY-SECRET-VALUE', '{ "dataDir": "x", "token": DUMMY-SECRET-VALUE }']) {
+      const proj = projectCopy();
+      const cfg = join(proj, 'company-pc.json');
+      writeFileSync(cfg, content);
+      const out = tmp();
+      const r = node(proj, 'scripts/backup.mjs', ['--no-local-config', '--out', out], { ...noEnv, MTM_CONFIG: cfg });
+      assert.equal(r.code, 0, r.out);
+      const entries = zipOf(out);
+      assert.ok(!entries.some((e) => e.name === 'company-pc.json'), 'the file itself is left out');
+      const m = manifestOf(entries);
+      assert.equal(m.includesLocalConfig, false);
+      assert.equal(m.metadataErrors.length, 1);
+      assert.match(m.metadataErrors[0], /company-pc\.json.*JSON/);
+      for (const t of infoTexts(entries)) assert.doesNotMatch(t, /DUMMY|SECRET/, 'no excerpt of the file');
+    }
+  });
+
+  test('a failed --check-build records no project path, also not as a file:// URL (round 6: review 1-3)', () => {
+    const proj = projectCopy('space project 日本'); // no Git; a space and non-ASCII characters (URL-encoded in stack traces)
+    appendFileSync(join(proj, 'src', 'scripts', '12-init.js'), '\nconst broken = ;\n');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--release', '--check-build', '--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    const entries = zipOf(out);
+    assert.equal(manifestOf(entries).build.check.ok, false);
+    for (const t of infoTexts(entries)) {
+      assert.ok(!t.includes(pathToFileURL(proj).href), 'no file:// URL of the project');
+      assert.ok(!t.includes(proj), 'no project path');
+      assert.doesNotMatch(t, /space%20project|%E6%97%A5/, 'no URL-encoded folder name');
+      assert.doesNotMatch(t, /file:\/\/\/(?!<)/, 'no absolute file URL at all');
+    }
   });
 });

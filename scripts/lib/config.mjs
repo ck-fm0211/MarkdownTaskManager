@@ -30,30 +30,60 @@ export function expandVars(value) {
   return v;
 }
 
-export function loadConfig({ root = ROOT, env = process.env } = {}) {
+// Where JSON.parse failed ("3 行目 15 列目"), or null. Taken from the position in the engine's
+// message only: the message itself may quote the file ("Unexpected token 'D', "DUMMY…" is not
+// valid JSON"), and the file may hold values that must not be copied anywhere (e.g. into a ZIP).
+export function jsonErrorWhere(error, text) {
+  const m = /\bposition (\d+)/.exec(String(error && error.message));
+  if (!m) return /Unexpected end of JSON input/i.test(String(error && error.message)) ? '途中で終わっています' : null;
+  const lines = String(text ?? '').slice(0, Number(m[1])).split('\n');
+  return `${lines.length} 行目 ${lines[lines.length - 1].length + 1} 列目`;
+}
+
+// lenient: a configuration file that cannot be read, or a value that cannot be resolved, does not
+// stop the whole configuration: that part is null and the error is listed in cfg.errors (each with
+// kind 'read' | 'json' | 'value', key, where). The environment variables are still applied. Used by
+// the backup, which must keep the data folders given by MTM_DATA_DIR etc. out of the ZIP.
+export function loadConfig({ root = ROOT, env = process.env, lenient = false } = {}) {
   const file = env.MTM_CONFIG ? resolve(env.MTM_CONFIG) : join(root, CONFIG_NAME);
   let raw = {};
   let fileExists = false;
+  const errors = [];
+  const problem = (err) => { if (!lenient) throw err; errors.push(err); };
   if (existsSync(file)) {
     fileExists = true;
+    let text = null;
     try {
-      raw = JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, ''));
+      text = readFileSync(file, 'utf8').replace(/^﻿/, '');
     } catch (e) {
-      throw new Error(`${file} を JSON として読めません: ${e.message}`);
+      problem(Object.assign(new Error(`${file} を読めません: ${e.message}`), { kind: 'read' }));
+    }
+    if (text !== null) {
+      try {
+        raw = JSON.parse(text);
+      } catch (e) {
+        problem(Object.assign(new Error(`${file} を JSON として読めません: ${e.message}`), { kind: 'json', where: jsonErrorWhere(e, text) }));
+      }
     }
   }
+  if (!raw || typeof raw !== 'object') raw = {};
   const envMap = { appDir: 'MTM_APP_DIR', dataDir: 'MTM_DATA_DIR', backupDir: 'MTM_BACKUP_DIR' };
-  const cfg = { file, fileExists };
+  const cfg = { file, fileExists, errors };
   for (const k of KEYS) {
-    let v = env[envMap[k]] || raw[k] || '';
-    if (typeof v !== 'string') throw new Error(`${k} は文字列で指定してください`);
-    v = v.trim();
-    if (v) {
-      v = expandVars(v);
-      if (!isAbsolute(v)) v = resolve(dirname(file), v);
-      v = resolve(v);
+    cfg[k] = null;
+    try {
+      let v = env[envMap[k]] || raw[k] || '';
+      if (typeof v !== 'string') throw new Error(`${k} は文字列で指定してください`);
+      v = v.trim();
+      if (v) {
+        v = expandVars(v);
+        if (!isAbsolute(v)) v = resolve(dirname(file), v);
+        v = resolve(v);
+      }
+      cfg[k] = v || null;
+    } catch (e) {
+      problem(Object.assign(e, { kind: 'value', key: k }));
     }
-    cfg[k] = v || null;
   }
   return cfg;
 }

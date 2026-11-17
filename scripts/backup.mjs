@@ -20,7 +20,8 @@ import { join, relative, resolve, basename, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir, homedir } from 'node:os';
-import { loadConfig, ROOT, isInside, samePath, timestamp } from './lib/config.mjs';
+import { pathToFileURL } from 'node:url';
+import { loadConfig, ROOT, isInside, samePath, timestamp, jsonErrorWhere } from './lib/config.mjs';
 import { computeSourceHash, embeddedBuildInfo } from './lib/source-hash.mjs';
 import { writeZip, readZip } from './lib/zip.mjs';
 
@@ -46,21 +47,34 @@ function fail(msg) {
 // A backup must work in the middle of an edit, also when a metadata file is not valid JSON at the
 // moment: the problem is recorded and the sources are packed under a fixed name. Only a public
 // release requires valid metadata (and a valid configuration: it decides what must not be packed).
+// What goes into the ZIP (metadataErrors → manifest / README-RESTORE.md) is a FIXED description
+// with the position only, never the engine's message: JSON.parse quotes the input ("Unexpected
+// token 'D', "DUMMY-SECRET…" is not valid JSON"), and with --no-local-config the configuration
+// file itself is left out on purpose. The console (this PC only) still shows the full message.
 const metadataErrors = [];
-const configFile = process.env.MTM_CONFIG ? resolve(process.env.MTM_CONFIG) : join(root, 'local.config.json');
-let cfg;
-try { cfg = loadConfig({ root }); } catch (e) {
-  if (release) fail(e.message);
-  metadataErrors.push(`設定: ${e.message}`);
-  console.warn(`[注意] 設定ファイルを読めません（${e.message}）。--out がなければ開発フォルダー内の backups/ に出力します。`);
-  cfg = { file: configFile, appDir: null, dataDir: null, backupDir: null };
+// The configuration is read leniently: a broken file does not drop the folders given by the
+// environment variables (MTM_DATA_DIR …), which must stay out of the ZIP.
+const cfg = loadConfig({ root, lenient: true });
+const configBroken = cfg.errors.length > 0;
+if (configBroken) {
+  if (release) fail(cfg.errors[0].message);
+  const name = isInside(cfg.file, root) ? posix(relative(root, cfg.file)) : basename(cfg.file);
+  for (const e of cfg.errors) {
+    metadataErrors.push(e.kind === 'json' ? `設定（${name}）: JSON として読めません${e.where ? `（${e.where}）` : ''}`
+      : e.kind === 'read' ? `設定（${name}）: 読み込めません`
+        : `設定（${name}）: ${e.key} を解決できません（未定義の環境変数・文字列でない値など）`);
+    console.warn(`[注意] 設定を読めません（${e.message}）。`);
+  }
+  console.warn('[注意] 読めなかった設定は使いません。kanban.md / archive.md を含むフォルダー（開発フォルダー直下と examples/ を除く）は運用データとみなして除外します。--out がなく backupDir もわからなければ、開発フォルダー内の backups/ に出力します。');
 }
 function readJson(name, fallback) {
   const p = join(root, name);
   if (!existsSync(p)) return fallback;
-  try { return JSON.parse(readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); } catch (e) {
+  let text = '';
+  try { text = readFileSync(p, 'utf8').replace(/^\uFEFF/, ''); return JSON.parse(text); } catch (e) {
     if (release) fail(`${name} を JSON として読めません: ${e.message}`);
-    metadataErrors.push(`${name}: ${e.message}`);
+    const where = jsonErrorWhere(e, text);
+    metadataErrors.push(`${name}: JSON として読めません${where ? `（${where}）` : ''}`);
     console.warn(`[注意] ${name} を JSON として読めません（${e.message}）。固定名でバックアップします。`);
     return fallback;
   }
@@ -127,6 +141,14 @@ function walk(dir, out) {
       if (EXCLUDED_DIRS.has(name)) { skipped.dir.push(rel + '/'); continue; }
       if (rel !== '.git' && !rel.startsWith('.git/') && SECRET_DIRS.some((r) => r.test(name))) { skipped.secret.push(rel + '/'); continue; }
       if (protectedDirs.some((d) => samePath(d, abs))) { skipped.data.push(rel + '/'); continue; }
+      // The configuration could not be read, so dataDir may be unknown: a folder holding task
+      // files is taken for operations data (the project's own dummy data is at the root and in
+      // examples/).
+      if (configBroken && rel !== 'examples' && !rel.startsWith('.git/') && ['kanban.md', 'archive.md'].some((f) => existsSync(join(abs, f)))) {
+        skipped.data.push(rel + '/');
+        console.warn(`[注意] 運用データの可能性があるため除外: ${rel}/`);
+        continue;
+      }
       walk(abs, out);
       continue;
     }
@@ -197,12 +219,20 @@ if (checkBuild && !dryRun) {
 
 // The build output names its output file (a temp folder: user name on Windows) and may name the
 // project folder: neither belongs in a ZIP manifest (a release is public).
+// Stack traces name the files as file:// URLs ("file:///…/space%20project/build.mjs:61:3": spaces
+// and non-ASCII characters percent-encoded), so the URL form of each folder is hidden too, and
+// any remaining absolute file URL is cut down to its last part.
 function hidePaths(text, tmp) {
   let out = String(text);
-  const variants = (p) => [p, p.split(sep).join('/'), p.split('/').join('\\')];
+  const variants = (p) => {
+    const urls = [pathToFileURL(p).href];
+    try { urls.push(encodeURI(decodeURI(urls[0]))); } catch { /* keep the one form */ }
+    return [...urls, p, p.split(sep).join('/'), p.split('/').join('\\')];
+  };
   for (const [p, label] of [[tmp, '<一時フォルダー>'], [root, '<開発フォルダー>'], [homedir(), '~']]) {
     for (const v of variants(resolve(p))) if (v && v.length > 1) out = out.split(v).join(label);
   }
+  out = out.replace(/file:\/\/[^\s'"`()<>]*\/([^\s'"`()<>/]+)/g, '<パス>/$1');
   // build.mjs prints the output RELATIVE to the project ("../../../tmp/mtm-buildcheck-xxxx/…").
   return out.replace(/(?:\.\.[\\/])*[^\s'"`]*mtm-buildcheck-[^\s'"`\\/]*/g, '<一時フォルダー>');
 }
