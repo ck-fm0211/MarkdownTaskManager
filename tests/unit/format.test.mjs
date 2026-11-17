@@ -306,3 +306,43 @@ test('Markdown hard line breaks are kept; "---" between tasks is dropped', () =>
   const p = cycles(H() + '### TASK-001 | a\n**Status**: todo\n\n1行目  \n2行目\n\n---\n\n### TASK-002 | b\n**Status**: todo\n');
   assert.equal(p.tasks[0].description, '1行目  \n2行目');
 });
+
+// ----- Regression tests for review findings (3rd round) -----
+const HC = (cfg) => `# B\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n${cfg}\n---\n\n## Tasks\n\n### TASK-001 | a\n**Status**: todo\n`;
+
+test('an empty config value never swallows the next line', () => {
+  for (const key of ['Columns', 'Categories', 'Users', 'Priorities', 'Tags']) {
+    const p = cycles(HC(`**${key}**:\n**Categories**: 経理, 総務\n**Columns**: 📝 未着手 (todo) | ✅ 完了 (done)\n`.replace(`**${key}**:\n`, `**${key}**:\n`)));
+    for (const c of p.config.columns) assert.doesNotMatch(c.name, /\*\*/, `${key}: column name`);
+    for (const list of [p.config.categories, p.config.users, p.config.priorities, p.config.tags]) {
+      for (const v of list) assert.doesNotMatch(v, /\*\*/, `${key}: ${v}`);
+    }
+  }
+  const p = F.parseKanbanContent(HC('**Columns**:\n**Categories**: 経理\n'));
+  assert.deepEqual(plain(p.config.categories), ['経理']);
+  assert.equal(p.config.columns[0].id, 'todo', 'empty Columns → default columns, not the next line');
+});
+
+test('duplicate values in the configuration do not make the board read-only', () => {
+  const p = F.parseKanbanContent(HC('**Columns**: 📝 To Do (todo)\n**Tags**: #bug #feature #bug\n**Categories**: 開発, 調査, 開発\n'));
+  assert.deepEqual(plain(p.problems), []);
+});
+
+test('title may follow blank lines or comments', () => {
+  const p = cycles('\n<!-- memo -->\n' + HC('**Columns**: 📝 To Do (todo)\n'));
+  assert.equal(p.config.boardTitle, 'B');
+  assert.deepEqual(plain(p.problems), []);
+});
+
+test('~~~ fences are code blocks; an unclosed fence does not hide later headings', () => {
+  const base = HC('**Columns**: 📝 To Do (todo)\n');
+  assert.deepEqual(plain(F.parseKanbanContent(base + '\n**Notes**:\n~~~\n## in tilde fence\n~~~\n').problems), []);
+  const q = F.parseKanbanContent(base + '\n**Notes**:\n```\nunclosed\n\n### TASK-002 | b\n**Status**: todo\n\n## real heading\n');
+  assert.ok(q.problems.some((x) => x.code === 'heading-in-tasks'));
+});
+
+test('Subtasks written after Notes produce a warning', () => {
+  const p = F.parseKanbanContent(HC('**Columns**: 📝 To Do (todo)\n') + '\n**Notes**:\nメモ\n\n**Subtasks**:\n- [ ] x\n');
+  assert.ok(p.warnings.some((w) => w.code === 'subtasks-in-notes' && w.lines.includes('TASK-001')));
+  assert.deepEqual(plain(p.problems), []);
+});

@@ -410,7 +410,9 @@
         // original that is missing from the generated one would be lost on save.
         function headerTokens(lines) {
             const toks = [];
-            const list = (prefix, values) => values.map(v => v.trim()).filter(Boolean).forEach(v => toks.push(prefix + v));
+            // Categories / Users / Tags are de-duplicated by the generator (a repeated value is
+            // not information), so they are compared as sets.
+            const list = (prefix, values) => [...new Set(values.map(v => v.trim()).filter(Boolean))].forEach(v => toks.push(prefix + v));
             lines.forEach(raw => {
                 const l = raw.trim();
                 if (!l || /^-{3,}$/.test(l)) return;
@@ -458,11 +460,19 @@
         // after "## Tasks" would silently become part of the preceding task.
         function headingsOutsideFences(lines) {
             const found = [];
-            let fence = false;
-            lines.forEach(l => {
-                if (/^\s*```/.test(l)) fence = !fence;
-                else if (!fence && /^##\s/.test(l)) found.push(l.trim());
-            });
+            for (let i = 0; i < lines.length; i++) {
+                // A fence is ``` or ~~~ (3+), closed by the same character at least as long. An
+                // opener that is never closed is NOT a fence (the lines after it are still checked).
+                const open = lines[i].match(/^\s{0,3}(`{3,}|~{3,})/);
+                if (open) {
+                    const ch = open[1][0], len = open[1].length;
+                    const closeRe = new RegExp(`^\\s{0,3}\\${ch}{${len},}\\s*$`);
+                    let j = i + 1;
+                    while (j < lines.length && !closeRe.test(lines[j])) j++;
+                    if (j < lines.length) { i = j; continue; }
+                }
+                if (/^##\s/.test(lines[i])) found.push(lines[i].trim());
+            }
             return found;
         }
 
@@ -476,9 +486,13 @@
                 tags: [],
                 boardTitle: 'Kanban Board'
             };
-            const firstLine = content.split('\n', 1)[0];
-            const titleMatch = firstLine.match(/^#[ \t]+(.+?)[ \t]*$/);
-            if (titleMatch) cfg.boardTitle = titleMatch[1].trim();
+            // Title = the first "# " line before any "## " section (blank lines or comments may
+            // precede it).
+            for (const line of content.split('\n')) {
+                if (/^##/.test(line)) break;
+                const titleMatch = line.match(/^#[ \t]+(.+?)[ \t]*$/);
+                if (titleMatch) { cfg.boardTitle = titleMatch[1].trim(); break; }
+            }
 
             const idMatch = content.match(/<!--\s*Config:\s*Last Task ID:\s*(\d+)\s*-->/);
             if (idMatch) cfg.lastTaskId = parseInt(idMatch[1], 10);
@@ -487,7 +501,7 @@
             const section = content.match(/(?:^|\n)##[ \t]+⚙\uFE0F?[ \t]*Configuration[ \t]*((?:\n[\s\S]*?)?)(?=\n-{3,}[ \t]*(?:\n|$)|\n##\s|$)/u);
             if (section) {
                 const text = section[1];
-                const columnsMatch = text.match(/\*\*Columns\*\*\s*[:：]\s*(.+)/);
+                const columnsMatch = text.match(/\*\*Columns\*\*[ \t]*[:：][ \t]*(\S.*)/);
                 if (columnsMatch) {
                     const used = new Set();
                     cfg.columns = columnsMatch[1].split('|').map((col, idx) => {
@@ -503,14 +517,14 @@
                         return { name, id };
                     }).filter(Boolean);
                 }
-                const cat = text.match(/\*\*Categories\*\*\s*[:：]\s*(.+)/);
+                const cat = text.match(/\*\*Categories\*\*[ \t]*[:：][ \t]*(\S.*)/);
                 if (cat) cfg.categories = cat[1].split(',').map(c => c.trim()).filter(Boolean);
-                const usr = text.match(/\*\*Users\*\*\s*[:：]\s*(.+)/);
+                const usr = text.match(/\*\*Users\*\*[ \t]*[:：][ \t]*(\S.*)/);
                 if (usr) cfg.users = usr[1].split(',').map(u => u.trim()).filter(Boolean);
-                const pri = text.match(/\*\*Priorities\*\*\s*[:：]\s*(.+)/);
+                const pri = text.match(/\*\*Priorities\*\*[ \t]*[:：][ \t]*(\S.*)/);
                 if (pri) cfg.priorities = pri[1].split('|').map(p => p.trim()).filter(Boolean);
                 // Tags with or without "#" ("#バグ #改善" or "バグ, 改善").
-                const tg = text.match(/\*\*Tags\*\*\s*[:：]\s*(.+)/);
+                const tg = text.match(/\*\*Tags\*\*[ \t]*[:：][ \t]*(\S.*)/);
                 if (tg) cfg.tags = tg[1].split(/[\s,、，]+/).map(x => x.replace(/^[#＃]/, '')).filter(Boolean);
             }
             if (cfg.columns.length === 0) cfg.columns = DEFAULT_COLUMNS.map(c => ({ ...c }));
@@ -585,6 +599,11 @@
                 && !/^<!--\s*Format:\s*v2\s*-->$/i.test(l) && !/^<!--\s*Config:\s*Last Task ID:/.test(l));
             const lostHeader = lostHeaderLines(headerLines, config);
             if (lostHeader.length) problems.push({ code: 'unknown-header-content', lines: lostHeader });
+            // The header written on save must read back to the same header (fixed point).
+            const genHeader = generateKanbanContent(config, []);
+            const again = parseConfigSection(genHeader);
+            again.comments = config.comments;
+            if (generateKanbanContent(again, []) !== genHeader) problems.push({ code: 'unstable-header', lines: [] });
 
             // Every "### TASK-" line must have produced exactly one task.
             const loose = lines.filter(l => LOOSE_TASK_HEADER_RE.test(l));
@@ -607,6 +626,9 @@
             if (dups.length) warnings.push({ code: 'duplicate-id', ids: dups });
             const unknown = tasks.filter(t => t.statusUnknown).map(t => `${t.id}: ${t.status}`);
             if (unknown.length) warnings.push({ code: 'unknown-status', lines: unknown });
+            // "**Subtasks**:" written after "**Notes**:" is kept as notes text (not a checklist).
+            const inNotes = tasks.filter(t => /^\s*\*\*Subtasks\*\*\s*[:：]/m.test(t.notes || '')).map(t => t.id);
+            if (inNotes.length) warnings.push({ code: 'subtasks-in-notes', lines: inNotes });
 
             return { config, tasks, formatV2, problems, warnings };
         }
