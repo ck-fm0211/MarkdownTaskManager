@@ -335,7 +335,9 @@
                 if (!confirm(t('confirm.reloadDiscard'))) return false;
             }
             const ok = await openProject(session.dir, { skipLeaveCheck: true, reload: true });
-            if (ok && !opts.quiet) showNotification(t('notif.reloaded'), 'success');
+            // Like every other way of opening a project: the load warnings (duplicate ids, dates …,
+            // archive.md's too) stay visible after the message instead of being replaced by it.
+            if (ok && !opts.quiet) notifyProjectOpened(t('notif.reloaded'));
             return ok;
         }
 
@@ -376,8 +378,9 @@
                         document.getElementById('archiveModal').classList.add('active');
                     }
                     // A failed reload already reported its own error (load error, cancelled
-                    // initialisation): never cover it with a success message.
-                    if (ok) showNotification(t('notif.reloadedExternal'), 'success');
+                    // initialisation): never cover it with a success message. A successful one keeps
+                    // the load warnings visible (this is how a board edited by an AI is usually loaded).
+                    if (ok) notifyProjectOpened(t('notif.reloadedExternal'));
                     return;
                 }
                 const first = changed[0];

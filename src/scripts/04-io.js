@@ -65,8 +65,9 @@
         }
 
         // The success message after a project was opened (folder picker, recent-projects list, startup
-        // restore). It must not replace the load warnings that openProject() has just shown: they are
-        // kept after the message.
+        // restore, 🔄 / reload from disk, the automatic reload when the page gets the focus back). It
+        // must not replace the load warnings that openProject() has just shown: they are kept after
+        // the message.
         function notifyProjectOpened(message) {
             const w = session && session.warnings && session.warnings.length ? loadWarningsText(session.warnings) : '';
             showNotification(w ? `${message} — ${w}` : message, w ? 'error' : 'success');

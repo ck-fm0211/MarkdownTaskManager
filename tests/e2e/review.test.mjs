@@ -901,3 +901,54 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.ok(!codes.includes('nul-char'), 'its NULs are part of "not UTF-8"');
   });
 });
+
+describe('review round 8: load warnings after a reload', () => {
+  // An AI wrote dates that are not YYYY-MM-DD into both files (title n tells the versions apart).
+  const aiEdit = (page, n) => Promise.all([
+    writeFile(page, 'p', 'kanban.md', board(task(1, `A${n}`, '**Due**: 2026-2-1'), { lastId: 2 })),
+    writeFile(page, 'p', 'archive.md', archive(task(2, `B${n}`, '**Finished**: 2026-1-5', 'done'))),
+  ]);
+  const start = () => ({ 'kanban.md': board(task(1, 'A', '**Due**: 2026-02-01'), { lastId: 2 }), 'archive.md': archive(task(2, 'B', '**Finished**: 2026-01-05', 'done')) });
+  // Waits for the reload (a new session that shows title A<n>) and its message, then checks that
+  // the message keeps the warnings of BOTH files.
+  async function expectWarningsAfter(page, n, message, label) {
+    await page.waitForFunction((x) => session && tasks.length && tasks[0].title === `A${x}`, n);
+    await waitIdle(page);
+    await page.waitForFunction((m) => document.getElementById('notificationText').textContent.includes(m), message);
+    const text = await notificationText(page);
+    assert.match(text, /TASK-001 Due: 2026-2-1/, `${label}: kanban.md warning (${text})`);
+    assert.match(text, /archive\.md TASK-002 Finished: 2026-1-5/, `${label}: archive.md warning (${text})`);
+    assert.match(await page.evaluate(() => document.getElementById('notification').className), /\berror\b/, label);
+  }
+
+  it('🔄 without unsaved work and the automatic reload on focus keep the load warnings (round 8: review 中-2)', async ({ page }) => {
+    await createDir(page, 'p', start());
+    await openFolder(page, 'p');
+    await aiEdit(page, 1);
+    await page.click('#reloadBtn');
+    await expectWarningsAfter(page, 1, 'Changes made outside this page were loaded', '🔄');
+    await aiEdit(page, 2);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expectWarningsAfter(page, 2, 'Changes made outside this page were loaded', 'focus');
+    // Also while the archive dialog is open (it stays open after the reload).
+    await page.click('#archiveBtn');
+    await waitIdle(page);
+    await aiEdit(page, 3);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expectWarningsAfter(page, 3, 'Changes made outside this page were loaded', 'focus, archive dialog open');
+    assert.equal(await page.evaluate(() => document.getElementById('archiveModal').classList.contains('active')), true);
+  });
+
+  it('the banner\'s "Reload from disk" and 🔄 with unsaved work keep the load warnings (round 8: review 中-2)', async ({ page }) => {
+    await createDir(page, 'p', start());
+    await openFolder(page, 'p');
+    for (const [n, button] of [[1, '#syncReloadBtn'], [2, '#reloadBtn']]) {
+      await aiEdit(page, n);
+      await page.evaluate(() => { tasks[0].title = 'changed here'; return autoSave(); }); // → conflict
+      await waitIdle(page);
+      assert.equal(await syncState(page), 'conflict');
+      await page.click(button); // asks before discarding (accepted)
+      await expectWarningsAfter(page, n, 'Reloaded from disk', button);
+    }
+  });
+});
