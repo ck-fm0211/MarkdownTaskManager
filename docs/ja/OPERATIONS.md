@@ -1,5 +1,8 @@
 # 運用ガイド（会社 PC・OneDrive）
 
+GitHub から clone できない会社 PC での初回セットアップは [会社 PC でのセットアップ](COMPANY_PC_SETUP.md) を参照してください。
+Windows・WSL・macOS での配置、マウント済みの Google Drive、同梱 HTML を使った npm レジストリ接続不要の配備を案内しています。
+
 ## 1. フォルダー構成
 
 | | 名前 | OneDrive | 置くもの | 更新するもの |
@@ -23,14 +26,16 @@
 前提: Node.js 20 以上（ビルド・配備・バックアップ用。通常利用には不要）。
 
 1. ソースの ZIP（GitHub の「Download ZIP」、または `npm run release` で作ったもの）を A に展開します。
-2. A でターミナル（PowerShell / コマンドプロンプト）を開きます。
+2. A でターミナル（PowerShell / コマンドプロンプト）を開き、`npm run build:check` を実行します。
+   同梱の HTML がソースと一致していればそのまま使えます。再ビルドする場合は次を実行します。
    ```
    npm ci
    npm run build
+   npm run build:check
    npm run test:unit
    ```
-   `npm ci` には npm レジストリへの接続が必要です。社内で接続できない場合は、接続できる環境で
-   `npm ci` 済みのフォルダーごと（`node_modules` を含めて）持ち込むか、社内のレジストリ／プロキシ設定を使ってください。
+   npm レジストリに接続できない場合は、社内レジストリ／プロキシ、用意済みの npm キャッシュ（`npm ci --offline`）、
+   または同じソース・OS・CPU アーキテクチャ・Node.js メジャーバージョンで `npm ci` 済みの `node_modules` を使ってください。
 3. B・C・D のフォルダーを OneDrive 内に作ります。
 4. `local.config.example.json` を `local.config.json` にコピーして編集します（Git 管理外）。
    ```json
@@ -170,7 +175,7 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
 
 - 必須: ソース一式の ZIP（GitHub の「Download ZIP」または `npm run release` の出力）。
   `node_modules`・実データ・個別 PC 設定・秘密情報は含みません。
-- 社内で npm レジストリに接続できない場合のみ: `npm ci` 済みの `node_modules` も（同じ OS・同じ Node.js メジャーバージョンで作ったもの）。
+- 社内で npm レジストリに接続できず、再ビルドも必要な場合: 同じソース・OS・CPU アーキテクチャ・Node.js メジャーバージョンで `npm ci` 済みの `node_modules`、または用意済みの npm キャッシュも持ち込みます。
 - 持ち込み後は GitHub への接続なしで、ビルド・配備・バックアップが動きます。`npm ci`（初回と、復元確認の既定の動作）だけは
   npm レジストリか npm のキャッシュが必要です。どちらもない場合、復元確認は `--reuse-node-modules` を付けて実行します。
 - 本家・fork との自動同期は行いません。必要な機能が揃った版を固定して使ってください。
