@@ -91,9 +91,10 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
   運用データとみなして除外し、注意を表示します（大文字・小文字は区別しません）。
   - `kanban.md` / `archive.md`、その退避・書き出し（`kanban.v1-backup.md`、`kanban.unsaved-….md` など。名前だけで判定）
   - よくあるコピーの名前（中身は問いません。空でも）: 「kanban - コピー.md」「kanban - Copy (2).md」「kanban (2).md」
-    「kanban copy.md」「Copy of kanban.md」、OneDrive の競合コピー「kanban-PC名.md」（PC 名が大文字で始まり、大文字・数字・`-`
-    だけの 5 文字以上で、数字か `-` を含むもの。例: `kanban-DESKTOP-ABC123.md`、`archive-LAPTOP-01.md`。`kanban-API.md` や
-    `archive-2025.md` は名前では判定せず、次の中身の判定によります）。`archive` も同じ
+    「kanban copy.md」「Copy of kanban.md」、OneDrive の競合コピー「kanban-PC名.md」（PC 名が Windows の既定の名前
+    `DESKTOP-…` / `LAPTOP-…`（後ろに大文字・数字が 4 文字以上）のもの。例: `kanban-DESKTOP-ABC123.md`、
+    `archive-LAPTOP-7K3Q9ZX.md`。利用者が付けた PC 名のコピーや、`kanban-API.md`・`archive-2025.md`・`kanban-TODO-LIST.md` は
+    名前では判定せず、次の中身の判定によります）。`archive` も同じ
   - そのほか名前が `kanban` / `archive` で始まる `.md` で、中身がタスクのファイルのもの（`### TASK-<番号>` / `## TASK-<番号>` の行、
     `<!-- Format: v2 -->`・`<!-- Config: Last Task ID: … -->`、`## ⚙️ Configuration`、`**Columns**:` の行のどれかがある。先頭 64 KB を、
     NUL を除いて調べるので UTF-16 のコピーも含みます）。中身で判定するため、`kanban-ideas.md` のようなメモや
@@ -152,8 +153,8 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
      POSIX では SIGKILL で止めます。それでも 2 秒以内に終わらない場合は、その処理の PID を表示します。POSIX で合図を送るのは
      直接起動した処理（npm / node）だけです（npm がさらに起動した処理が残ることがあるかは未確認です。Windows はツリーごと止めます）。
    - ビルドの後の確認・一時フォルダーの削除の間に届いた合図でも、「OK」を出さずに 128 ＋ シグナル番号で終わります（npm ci の前、
-     ビルドの前後、「OK」の直前に合図を確認します）。ただし、合図を確認する前に確認そのものが失敗した場合は、その失敗
-     （「[復元確認 NG] …」、終了コード 1）として終わります。どちらの場合も「OK」は出しません。一時フォルダーの削除中に中断すると、一時フォルダーの一部が残ることがあります。
+     ビルドの前後、「OK」の直前に合図を確認します）。確認そのものが失敗した場合も、それまでに届いていた合図があれば、
+     失敗の内容を表示したうえで 128 ＋ シグナル番号で終わります（合図がなければ終了コード 1）。一時フォルダーの削除中に中断すると、一時フォルダーの一部が残ることがあります。
      ZIP の展開・照合の最中に届いた合図は、次の確認の時点（npm ci / ビルドの開始前）で処理します。
    - 失敗の表示に出す `npm ci` / ビルドの出力は、最後の行（最大 4000 文字）だけです（出力は UTF-8 として読み、末尾 64K 文字だけを
      保持します）。

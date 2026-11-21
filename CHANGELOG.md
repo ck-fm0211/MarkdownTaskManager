@@ -17,7 +17,8 @@ Data protection
   as "not UTF-8 — save it again as UTF-8" (which cannot remove it); `tasks check` said NG, `next-id` stopped.
   Every input that writes text refuses a NUL and an unpaired surrogate (written as U+FFFD) before anything is
   changed (taskWriteProblems for all form fields and the detail view's subtasks, configWriteProblems for
-  columns); writeFileChecked() refuses such content without writing ('refused', last line of defence).
+  columns); writeFileChecked() refuses such content without writing ('refused', last line of defence; the
+  banner offers no "Retry" for it, since the same content would be refused again).
 - NUL detection split: UTF-16 without a BOM is recognised by NULs at one byte parity or by its line breaks
   ("\n\0" / "\0\n", e.g. a file of mostly kana and full-width spaces) and stays "not UTF-8"; a
   NUL in valid UTF-8 is reported as `nul-char` with the line of the first one and the count (still
@@ -27,7 +28,8 @@ Data protection
   control characters are not refused (they read back unchanged).
 - `restore:verify`: a signal during the checks after the build or the removal of the temporary folder was
   ignored and the check ended "OK" with exit code 0 (synchronous rmSync). The folder is removed
-  asynchronously and pending signals are handled before each step and right before "OK".
+  asynchronously and pending signals are handled before each step, right before "OK" and before ending with
+  a failed check (so an interruption always ends with 128 + the signal number).
 - `restore:verify`: a step that does not end on SIGTERM is killed with SIGKILL after 3 s (POSIX); if it still
   runs, its PID is printed (it was left running and kept writing into the restore folder).
 - `restore:verify`: step output is decoded as UTF-8 (a character split between pipe chunks became U+FFFD) and
@@ -35,7 +37,7 @@ Data protection
   cut off on a pipe before the exit).
 - Backup with an unreadable configuration: copies of the task files keep their folder out of the ZIP — the
   usual copy names ("kanban - コピー.md", "kanban (2).md", "Copy of kanban.md", OneDrive conflict copies
-  "kanban-<PC name>.md", PC names like Windows gives them) whatever their content, and any other .md named kanban*/archive* whose content is a
+  "kanban-DESKTOP-….md" / "-LAPTOP-…", the PC names Windows gives by default) whatever their content, and any other .md named kanban*/archive* whose content is a
   task file (also UTF-16, also `## TASK-` headers), so notes and docs/ stay in.
 
 App
@@ -45,11 +47,11 @@ App
   updated is shown with the "loaded" message as an error instead of being hidden by a green one.
 
 Tests and docs
-- Regression tests for every item (unit 7, scripts 7, browser 10); all fail on `1b3c200` except three guard
+- Regression tests for every item (unit 8, scripts 8, browser 10); all fail on `1b3c200` except three guard
   tests (UTF-16 without a BOM stays "not UTF-8" in unit and CLI, other control characters are not refused);
   "no new task while archive.md has a NUL" fails there only because 1b3c200 calls that file "not UTF-8".
   The test mock's saveDirectoryHandle returns true like the real one. The round 7 signal test is skipped on
-  Windows (child.kill() terminates there). 190 tests.
+  Windows (child.kill() terminates there). 192 tests.
 - SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING, AGENTS.md, AI_WORKFLOW.md and the Claude skill
   updated (NUL vs UTF-16, reload warnings, restore:verify signals and Windows forced termination, backup
   exclusion of copies).

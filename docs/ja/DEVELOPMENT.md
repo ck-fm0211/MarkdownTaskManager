@@ -97,6 +97,7 @@ npm run check       # build → test
 - `scripts/verify-restore.mjs` の時間のかかる処理（`npm ci`・ビルド）は `runStep()`（非同期）で実行してください。
   `spawnSync` の間はシグナルを処理できず、中断しても最後まで実行してしまいます。同期処理（`rmSync` など）を長く続けると
   同じことが起きるので、削除は `fs/promises` の `rm` で行い、次の段階の前と「OK」の直前に `checkpoint()` を呼んでください。
+  `fail()` は非同期です（終える前に `checkpoint()` で届いていた合図を処理します）。必ず `await fail(…)` と書いてください。
   `runStep()` は出力を UTF-8 として読み、末尾（`OUTPUT_TAIL`）だけを保持します。失敗の表示は `lastLines()` で短くしてください
   （`process.exit()` の直前に書く長い文字列は、パイプでは途中で切れます）。止めた処理が終わらないときは 3 秒後に SIGKILL
   （`STOP_GRACE_MS`）、それでも終わらなければ PID を表示します。
