@@ -1048,12 +1048,17 @@ describe('review round 8: errors while a project is opened', () => {
   it('a conflict that starts while the folder is opened (V1 migration) is not covered by "Folder loaded" (round 8: review 低-6)', async ({ page }) => {
     const v1 = readFileSync(new URL('../../examples/kanban.md', import.meta.url), 'utf8');
     await createDir(page, 'p', { 'kanban.md': v1, 'archive.md': archive('') });
-    // The backup written before the migration is slow; meanwhile another program changes kanban.md.
-    await setFault(page, 'p', 'kanban.v1-backup.md', { writeDelay: 400 });
+    // Hold the backup until the external edit is complete: even a slow test runner must place
+    // the edit before the migration checks kanban.md, not within a fixed timing window.
+    await page.evaluate(() => window.__mockFS.holdWrite('p', 'kanban.v1-backup.md'));
     await page.evaluate(() => { window.__mockFS.nextPick = window.__mockFS.dir('p'); });
     await page.click('#selectFolderBtn');
-    await page.waitForFunction(() => session && session.dir.name === 'p' && pendingWrites > 0);
-    await writeFile(page, 'p', 'kanban.md', v1 + '\n<!-- edited elsewhere -->\n');
+    await page.waitForFunction(() => window.__mockFS.isWriteHeld('p', 'kanban.v1-backup.md'));
+    try {
+      await writeFile(page, 'p', 'kanban.md', v1 + '\n<!-- edited elsewhere -->\n');
+    } finally {
+      await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.v1-backup.md'));
+    }
     await waitIdle(page);
     await page.waitForFunction(() => /Folder loaded/.test(document.getElementById('notificationText').textContent));
     const n = await notification(page);

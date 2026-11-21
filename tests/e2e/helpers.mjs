@@ -78,6 +78,7 @@ function mockFsInit() {
   const dom = (name, msg) => new DOMException(msg || name, name);
   const dirs = new Map();
   const faults = {}; // key "dir/file" → { readFail, contentFail, writeFail, closeFail, readDelay, writeDelay }
+  const heldWrites = new Map(); // explicitly released by a test, independent of elapsed time
   const writeLog = [];
   const fault = (d, f) => faults[`${d}/${f}`] || {};
 
@@ -108,6 +109,8 @@ function mockFsInit() {
         async write(data) { buf += typeof data === 'string' ? data : await new Blob([data]).text(); },
         async close() {
           const f2 = fault(self._dir.name, self.name);
+          const held = heldWrites.get(`${self._dir.name}/${self.name}`);
+          if (held) { held.waiting = true; await held.promise; }
           if (f2.writeDelay) await sleep(f2.writeDelay);
           if (f2.closeFail) throw dom('InvalidStateError', 'mock close failure');
           // Like Chromium: content becomes visible only on close (swap file).
@@ -153,6 +156,21 @@ function mockFsInit() {
     remove: (d, f) => { dirs.get(d)._files.delete(f); },
     files: (d) => [...dirs.get(d)._files.keys()].sort(),
     setFault: (d, f, v) => { faults[`${d}/${f}`] = v || {}; },
+    holdWrite(d, f) {
+      const key = `${d}/${f}`;
+      if (heldWrites.has(key)) throw new Error(`write already held: ${key}`);
+      let release;
+      const promise = new Promise((resolve) => { release = resolve; });
+      heldWrites.set(key, { promise, release, waiting: false });
+    },
+    isWriteHeld: (d, f) => heldWrites.get(`${d}/${f}`)?.waiting === true,
+    releaseWrite(d, f) {
+      const key = `${d}/${f}`;
+      const held = heldWrites.get(key);
+      if (!held) throw new Error(`write not held: ${key}`);
+      heldWrites.delete(key);
+      held.release();
+    },
     writeLog,
     nextPick: null,
   };
