@@ -197,8 +197,9 @@
                 if (!leave) { await updateProjectSelector(); return; }
                 const ok = await openProject(project.handle, { skipLeaveCheck: true });
                 if (ok) {
-                    if (!(await saveDirectoryHandle(project.handle))) console.warn('recent-projects list not updated');
-                    notifyProjectOpened(t('notif.projectLoaded', {name: project.customName || project.name}));
+                    const listed = await saveDirectoryHandle(project.handle);
+                    if (!listed) console.warn('recent-projects list not updated');
+                    notifyProjectOpened(t('notif.projectLoaded', {name: project.customName || project.name}), listed ? [] : [t('notif.historyError')]);
                 }
                 await updateProjectSelector();
             } catch (error) {
@@ -340,12 +341,14 @@
                 const leave = await confirmLeaveCurrent();
                 if (overtaken() || !leave) return;
                 const ok = await openProject(picked, { skipLeaveCheck: true });
-                if (ok && !(await saveDirectoryHandle(picked))) showNotification(t('notif.historyError'), 'error'); // Save for next time
+                // Save for next time. A failure is shown WITH the "loaded" message (shown on its own, it
+                // was replaced by that message at once).
+                const listed = ok ? await saveDirectoryHandle(picked) : true;
 
                 // Update project selector now that kanban is visible
                 await updateProjectSelector();
 
-                if (ok) notifyProjectOpened(t('notif.folderLoaded'));
+                if (ok) notifyProjectOpened(t('notif.folderLoaded'), listed ? [] : [t('notif.historyError')]);
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     showNotification(t('notif.folderError'), 'error');

@@ -192,12 +192,15 @@ export async function newPage(browser, { locale = 'en-US', language = null, http
     window.__realStorage = { loadRecentProjects, saveDirectoryHandle };
     window.__projects = [];
     window.loadRecentProjects = async () => window.__projects;
+    // Like the real function: true when the list was updated (a falsy result is shown to the user
+    // as "the recent-projects list could not be updated").
     window.saveDirectoryHandle = async (handle) => {
       const i = window.__projects.findIndex((p) => p.handle === handle);
       const entry = { handle, name: handle.name, customName: '', lastAccessed: Date.now() };
       if (i >= 0) window.__projects.splice(i, 1);
       window.__projects.unshift(entry);
       await updateProjectSelector();
+      return true;
     };
   });
   return { page, context, errors, requests, dialogs };

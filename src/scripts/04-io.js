@@ -67,10 +67,17 @@
         // The success message after a project was opened (folder picker, recent-projects list, startup
         // restore, 🔄 / reload from disk, the automatic reload when the page gets the focus back). It
         // must not replace the load warnings that openProject() has just shown: they are kept after
-        // the message.
-        function notifyProjectOpened(message) {
-            const w = session && session.warnings && session.warnings.length ? loadWarningsText(session.warnings) : '';
-            showNotification(w ? `${message} — ${w}` : message, w ? 'error' : 'success');
+        // the message. Neither may it hide an error of the opening itself behind a green message: a
+        // failed save (e.g. of the V1 → V2 migration), a conflict, or `extraErrors` of the caller (the
+        // recent-projects list could not be updated) are shown with it, as an error.
+        function notifyProjectOpened(message, extraErrors = []) {
+            const s = session;
+            const errors = [];
+            if (s && s.conflict) errors.push(t('sync.conflict.' + s.conflict.kind, { file: fileLabel(s.conflict.which) }));
+            if (s && s.lastError) errors.push(t('sync.error.' + s.lastError.kind, { file: fileLabel(s.lastError.which) }));
+            errors.push(...extraErrors);
+            if (s && s.warnings && s.warnings.length) errors.push(loadWarningsText(s.warnings));
+            showNotification(errors.length ? `${message} — ${errors.join(' / ')}` : message, errors.length ? 'error' : 'success');
         }
 
         function applyArchiveText(s, text, notUtf8 = false) {

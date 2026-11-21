@@ -952,3 +952,34 @@ describe('review round 8: load warnings after a reload', () => {
     }
   });
 });
+
+describe('review round 8: errors while a project is opened', () => {
+  const notification = (page) => page.evaluate(() => ({ text: document.getElementById('notificationText').textContent, cls: document.getElementById('notification').className }));
+
+  it('a failed save while opening (V1 migration) is not covered by "Folder loaded" (round 8: review 低-6)', async ({ page }) => {
+    const v1 = readFileSync(new URL('../../examples/kanban.md', import.meta.url), 'utf8');
+    await createDir(page, 'p', { 'kanban.md': v1, 'archive.md': archive('') });
+    await setFault(page, 'p', 'kanban.md', { writeFail: true });
+    await openFolder(page, 'p');
+    const n = await notification(page);
+    assert.match(n.text, /Folder loaded successfully!.*Writing kanban\.md failed/, n.text);
+    assert.match(n.cls, /\berror\b/);
+    assert.equal(await page.evaluate(() => session.lastError && session.lastError.kind), 'write-failed');
+    assert.equal(await readFile(page, 'p', 'kanban.md'), v1, 'the V1 file is unchanged');
+    assert.equal(await syncState(page), 'error');
+  });
+
+  it('a recent-projects list that could not be updated is said with the "loaded" message (round 8: review 低-6)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'A'), { lastId: 1 }), 'archive.md': archive('') });
+    await page.evaluate(() => { window.saveDirectoryHandle = async () => false; });
+    await openFolder(page, 'p');
+    const n = await notification(page);
+    assert.match(n.text, /Folder loaded successfully!.*recent-projects list could not be updated/, n.text);
+    assert.match(n.cls, /\berror\b/);
+    // Without a problem the message stays a plain success.
+    await page.evaluate(() => { window.saveDirectoryHandle = async () => true; });
+    await createDir(page, 'q', { 'kanban.md': board(task(1, 'Q'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'q');
+    assert.deepEqual(await notification(page), { text: 'Folder loaded successfully!', cls: 'notification success show' });
+  });
+});
