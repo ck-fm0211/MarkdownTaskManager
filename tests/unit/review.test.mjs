@@ -349,6 +349,10 @@ describe('a NUL in UTF-8 text is not "not UTF-8"; UTF-16 without a BOM still is 
     const a = plain(F.parseArchiveContent('# Task Archive\n<!-- Format: v2 -->\n\n### TASK-002 | x\0y\n**Status**: done\n').problems);
     assert.deepEqual(a.map((x) => [x.code, x.line]), [['nul-char', 4]]);
   });
+  test('an id in a task header line with a NUL is still counted (as it reads once the NUL is deleted)', () => {
+    assert.equal(F.maxIdInText('# Task Archive\n\n### TASK-1\u000050 | x\n**Status**: done\n'), 150);
+    assert.equal(F.maxIdInText('### TASK-007 | a\n'), 7);
+  });
   test('a run of NULs (e.g. the damaged end of a file) is nul-char too, not UTF-16', () => {
     const text = board + '\0'.repeat(300);
     assert.equal(F.decodeUtf8(new TextEncoder().encode(text)).valid, true);

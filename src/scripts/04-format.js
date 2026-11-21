@@ -280,7 +280,10 @@
         // "### TASK-０６０".
         function maxIdInText(text) {
             let max = 0;
-            for (const m of normalizeEol(text).normalize('NFKC').matchAll(/^[^\S\n]*#{1,6}[^\S\n]*TASK[^\S\n]*[-‐‑–][^\S\n]*(\d+)/gmi)) {
+            // NULs are removed first: "### TASK-1\050" reads as TASK-150, the id that line has once the NUL
+            // is deleted (as the nul-char message asks), so a new task never takes it in the meantime.
+            const plain = normalizeEol(text).replace(/\0/g, '');
+            for (const m of plain.normalize('NFKC').matchAll(/^[^\S\n]*#{1,6}[^\S\n]*TASK[^\S\n]*[-‐‑–][^\S\n]*(\d+)/gmi)) {
                 max = Math.max(max, parseInt(m[1], 10));
             }
             return max;
