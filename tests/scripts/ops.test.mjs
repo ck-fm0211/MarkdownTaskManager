@@ -667,6 +667,7 @@ describe('review round 8 (ops)', () => {
       assert.equal(r.code, 143, v.output());
       assert.match(v.output(), /中断されました（SIGTERM）/);
       assert.ok(r.at - sent < 5500, `ended ${r.at - sent} ms after the signal`);
+      assert.ok(r.at - sent >= 2500, `the build ignored SIGTERM, so it was stopped only after the grace period (${r.at - sent} ms)`);
       assert.equal(alive(buildPid), false, 'the build that ignored SIGTERM is not left running');
       assert.ok(!existsSync(join(dest, 'node_modules')), 'the link was removed');
     } finally {
@@ -696,16 +697,22 @@ describe('review round 8 (ops)', () => {
     for (const [d, f] of Object.entries(copies)) { mkdirSync(join(proj, d)); writeFileSync(join(proj, d, f), d === 'copy4' ? readFileSync(join(ROOT, 'examples', 'archive.md'), 'utf8') : boardMd); }
     mkdirSync(join(proj, 'copy5'));
     writeFileSync(join(proj, 'copy5', 'kanban-PC2.md'), Buffer.from(boardMd, 'utf16le')); // saved as UTF-16
+    // The usual copy names count whatever the content (also empty or a dummy text).
+    const byName = { copy6: ['kanban - コピー.md', 'x\n'], copy7: ['Copy of kanban.md', ''], copy8: ['kanban - Copy (2).md', 'x'], copy9: ['archive-LAPTOP-01.md', ''], copy10: ['kanban copy 2.md', 'x'] };
+    for (const [d, [f, text]] of Object.entries(byName)) { mkdirSync(join(proj, d)); writeFileSync(join(proj, d, f), text); }
+    mkdirSync(join(proj, 'copy11'));
+    writeFileSync(join(proj, 'copy11', 'kanban-old.md'), '# Old\n\n## TASK-001 | h2 header\n'); // task header written as h2
     // Not task files: a note whose name starts with "kanban", a picture.
     mkdirSync(join(proj, 'notes'));
     writeFileSync(join(proj, 'notes', 'kanban-ideas.md'), '# カンバンの改善案\n\n- 列の色\n');
+    writeFileSync(join(proj, 'notes', 'archive-policy.md'), '# アーカイブの方針\n'); // lower case after "-": not a PC name
     writeFileSync(join(proj, 'local.config.json'), '{ "dataDir": ');
     const out = tmp();
     const r = node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: '' });
     assert.equal(r.code, 0, r.out);
     const names = readZip(zipIn(out)).map((e) => e.name);
-    for (const d of ['copy1/', 'copy2/', 'copy3/', 'copy4/', 'copy5/']) assert.ok(!names.some((n) => n.startsWith(d)), d);
-    for (const must of ['notes/kanban-ideas.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
+    for (const d of ['copy1/', 'copy2/', 'copy3/', 'copy4/', 'copy5/', 'copy6/', 'copy7/', 'copy8/', 'copy9/', 'copy10/', 'copy11/']) assert.ok(!names.some((n) => n.startsWith(d)), d);
+    for (const must of ['notes/kanban-ideas.md', 'notes/archive-policy.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
       '.claude/skills/markdown-task-manager/SKILL.md', 'examples/kanban.md', 'kanban.md', 'archive.md']) assert.ok(names.includes(must), must);
     assert.match(r.out, /運用データの可能性があるため除外: copy1\//);
   });

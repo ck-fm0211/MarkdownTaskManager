@@ -65,7 +65,7 @@ if (configBroken) {
         : `設定（${name}）: ${e.key} を解決できません（未定義の環境変数・文字列でない値など）`);
     console.warn(`[注意] 設定を読めません（${e.message}）。`);
   }
-  console.warn('[注意] 読めなかった設定は使いません。運用データの可能性があるフォルダー（kanban.md / archive.md、その退避・書き出し（kanban.v1-backup.md など）、名前が kanban / archive で始まりタスクの内容を含む .md（「kanban - コピー.md」・OneDrive の競合コピーなど）のどれかを含むフォルダー。開発フォルダー直下と examples/ を除く）は除外します。--out がなく backupDir もわからなければ、開発フォルダー内の backups/ に出力します。');
+  console.warn('[注意] 読めなかった設定は使いません。運用データの可能性があるフォルダー（kanban.md / archive.md、その退避・書き出し（kanban.v1-backup.md など）、コピーの名前（「kanban - コピー.md」「kanban (2).md」・OneDrive の競合コピーなど）、名前が kanban / archive で始まりタスクの内容を含む .md のどれかを含むフォルダー。開発フォルダー直下と examples/ を除く）は除外します。--out がなく backupDir もわからなければ、開発フォルダー内の backups/ に出力します。');
 }
 function readJson(name, fallback) {
   const p = join(root, name);
@@ -135,9 +135,23 @@ const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d
 //   "kanban (2).md" and OneDrive conflict copies ("kanban-DESKTOP-ABC123.md"). The content decides,
 //   so that a note "kanban-ideas.md" or a picture "kanban-board.jpg" keeps its folder in the backup.
 //   NULs are removed before the check: a copy saved as UTF-16 is recognised too.
+// - the usual names of copies, whatever their content (also an empty one): "kanban - コピー.md",
+//   "kanban - Copy (2).md", "kanban (2).md", "kanban copy.md", "Copy of kanban.md", and OneDrive conflict
+//   copies "kanban-<PC name>.md" (the PC name in capitals and digits, e.g. "kanban-DESKTOP-ABC123.md").
 const TASK_FILE_RE = /^(kanban|archive)(\.[^\\/]*)?\.md$/i;
 const TASK_FILE_LIKE_RE = /^(kanban|archive)[^\\/]*\.md$/i;
-const TASK_CONTENT_RE = /^###[ \t]+TASK-\d+|<!--\s*(Format:\s*v2|Config:\s*Last Task ID)|^##[ \t]+⚙|^\*\*Columns\*\*\s*[:：]/m;
+const TASK_CONTENT_RE = /^#{2,3}[ \t]*TASK-\d+|<!--\s*(Format:\s*v2|Config:\s*Last Task ID)|^##[ \t]+⚙|^\*\*Columns\*\*\s*[:：]/m;
+const TASK_COPY_RES = [
+  /^(kanban|archive)\s*-\s*(コピー|copy)(\s*\(\d+\))?\.md$/i,
+  /^(kanban|archive)\s*\(\d+\)\.md$/i,
+  /^(kanban|archive) copy( \d+)?\.md$/i,
+  /^(copy of|コピー ～) (kanban|archive)\.md$/i,
+];
+function isTaskFileCopyName(name) {
+  if (TASK_COPY_RES.some((r) => r.test(name))) return true;
+  const m = name.match(/^(kanban|archive)-(.+)\.md$/i); // OneDrive: "<name>-<PC name>.md" (PC names are capitals)
+  return !!m && /^[A-Z0-9][A-Z0-9-]*$/.test(m[2]);
+}
 function looksLikeTaskFile(path) {
   let fd = null;
   try {
@@ -149,7 +163,7 @@ function looksLikeTaskFile(path) {
 }
 function holdsTaskFiles(dir) {
   try {
-    return readdirSync(dir, { withFileTypes: true }).some((e) => TASK_FILE_RE.test(e.name)
+    return readdirSync(dir, { withFileTypes: true }).some((e) => TASK_FILE_RE.test(e.name) || isTaskFileCopyName(e.name)
       || (e.isFile() && TASK_FILE_LIKE_RE.test(e.name) && looksLikeTaskFile(join(dir, e.name))));
   } catch { return false; }
 }
