@@ -153,8 +153,12 @@
         function isIsoDate(s) {
             const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s ?? ''));
             if (!m) return false;
-            const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-            return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+            const [y, mo, day] = [+m[1], +m[2], +m[3]];
+            // setUTCFullYear, not Date.UTC: Date.UTC reads the years 0–99 as 1900–1999. Year 0000 is not
+            // a valid date for a date input either.
+            const d = new Date(0);
+            d.setUTCFullYear(y, mo - 1, day);
+            return y >= 1 && d.getUTCFullYear() === y && d.getUTCMonth() === mo - 1 && d.getUTCDate() === day;
         }
         const DATE_FIELDS = [['created', 'Created'], ['started', 'Started'], ['due', 'Due'], ['completed', 'Finished']];
         function nonIsoDates(list) {

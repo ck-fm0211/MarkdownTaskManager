@@ -323,3 +323,12 @@ describe('UTF-16 without a BOM is not UTF-8 (round 7: review 1)', () => {
     assert.equal(F.decodeUtf8(new TextEncoder().encode(ascii + '経理\n')).valid, true);
   });
 });
+
+describe('YYYY-MM-DD years below 100 (round 7: review 7)', () => {
+  test('"0007-02-02" is a YYYY-MM-DD date (no warning); "0000-01-01" is not one a date field can show', () => {
+    const r = F.parseKanbanContent(v2Board('### TASK-001 | t\n**Status**: todo\n**Created**: 0007-02-02 | **Due**: 0099-12-31\n\n### TASK-002 | u\n**Status**: todo\n**Due**: 0000-01-01\n'));
+    assert.deepEqual(plain(r.problems), []);
+    const w = plain(r.warnings).find((x) => x.code === 'non-iso-date');
+    assert.deepEqual(w && w.lines, ['TASK-002 Due: 0000-01-01']);
+  });
+});
