@@ -48,6 +48,9 @@ const withNul = [['kanban.md', k], ['archive.md', a]].filter(([, r]) => r && r.p
 const active = k ? k.tasks : [];
 const archived = a ? a.tasks : [];
 
+// NULs (e.g. of a UTF-16 file read as UTF-8, or in a task's text) are shown as "␀", never written to the terminal.
+const visible = (text) => String(text).replace(/\0/g, '\u2400');
+
 function printProblems(label, list) {
   for (const p of list) {
     if (p.code === 'nul-char') {
@@ -57,8 +60,7 @@ function printProblems(label, list) {
       continue;
     }
     console.log(`  ✗ ${label}: ${p.code}${p.id ? ' ' + p.id : ''}${p.section ? ' [' + p.section + ']' : ''}`);
-    // NULs (e.g. of a UTF-16 file read as UTF-8) are shown as "␀", not written to the terminal.
-    (p.lines || []).slice(0, 8).forEach((l) => console.log(`      ${String(l).replace(/\0/g, '\u2400')}`));
+    (p.lines || []).slice(0, 8).forEach((l) => console.log(`      ${visible(l)}`));
   }
 }
 
@@ -105,7 +107,7 @@ if (cmd === 'where') {
     console.log(`kanban.md : ${active.length} タスク（V2=${k.formatV2}）`);
     printProblems('kanban.md', k.problems); bad += k.problems.length;
     k.warnings.forEach((w) => {
-      console.log(`  ⚠ ${w.code}: ${(w.ids || w.lines || []).join(', ')}`);
+      console.log(`  ⚠ ${w.code}: ${visible((w.ids || w.lines || []).join(', '))}`);
       if (w.code === 'duplicate-id') toFix++;
     });
   }
@@ -113,7 +115,7 @@ if (cmd === 'where') {
     console.log(`archive.md: ${archived.length} タスク`);
     printProblems('archive.md', a.problems); bad += a.problems.length;
     a.warnings.forEach((w) => {
-      console.log(`  ⚠ archive.md ${w.code}: ${(w.ids || w.lines || []).join(', ')}`);
+      console.log(`  ⚠ archive.md ${w.code}: ${visible((w.ids || w.lines || []).join(', '))}`);
       if (w.code === 'duplicate-id') toFix++;
     });
   }

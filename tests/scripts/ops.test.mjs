@@ -811,6 +811,12 @@ describe('review round 8 (ops)', () => {
     assert.match(c3.out, /archive\.md: NUL 文字.*行目にあります/);
     assert.doesNotMatch(c3.out, /UTF-8 ではありません/, 'not "save it again as UTF-8"');
     assert.match(c3.out, /次の ID: （NUL 文字のあるファイルがあるため決められません）/);
+    // A NUL in a task's text shows as "␀" in the warning lines too (no raw NUL on the terminal).
+    const dir4 = tmp();
+    writeFileSync(join(dir4, 'kanban.md'), kanbanWith('').replace('**Status**: todo', '**Status**: to\0do'));
+    const c4 = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir4]);
+    assert.match(c4.out, /unknown-status: TASK-003: to\u2400do/);
+    assert.ok(!c4.out.includes('\0'), 'no raw NUL is printed');
   });
 
   test('guard: tasks check / next-id: UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', () => {
