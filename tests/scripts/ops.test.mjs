@@ -650,6 +650,30 @@ describe('review round 8 (ops)', () => {
     assert.equal(r.code, 143, v.output());
   });
 
+  test('restore:verify: a step that ignores SIGTERM is killed; nothing is left running after the script (round 8: review 低-3)', { skip: winSignals, timeout: 120000 }, async () => {
+    const proj = projectCopy();
+    writeFileSync(join(proj, 'build.mjs'), "import { writeFileSync } from 'node:fs';\nwriteFileSync('build.pid', String(process.pid));\nprocess.on('SIGTERM', () => {});\nsetTimeout(() => writeFileSync('late-write.txt', 'x'), 6000);\n");
+    const zip = backupOf(proj);
+    const dest = join(tmp(), 'restore');
+    const v = verifyInBackground(proj, [zip, '--reuse-node-modules', '--dest', dest]);
+    const deadline = Date.now() + 60000;
+    while (!existsSync(join(dest, 'build.pid')) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50));
+    await new Promise((res) => setTimeout(res, 100)); // the build has installed its SIGTERM handler
+    const buildPid = Number(readFileSync(join(dest, 'build.pid'), 'utf8'));
+    try {
+      const sent = Date.now();
+      v.child.kill('SIGTERM');
+      const r = await v.exited;
+      assert.equal(r.code, 143, v.output());
+      assert.match(v.output(), /中断されました（SIGTERM）/);
+      assert.ok(r.at - sent < 5500, `ended ${r.at - sent} ms after the signal`);
+      assert.equal(alive(buildPid), false, 'the build that ignored SIGTERM is not left running');
+      assert.ok(!existsSync(join(dest, 'node_modules')), 'the link was removed');
+    } finally {
+      try { process.kill(buildPid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+  });
+
   const kanbanWith = (extra) => `# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n${extra}`;
 
   test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); next-id still gives an id (round 8: review 中-1)', () => {

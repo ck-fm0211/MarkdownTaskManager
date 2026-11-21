@@ -36,21 +36,32 @@ function fail(msg) { unlinkModules(); console.error(`\n[復元確認 NG] ${msg}`
 // the running step is stopped, the link is removed and the exit code is 128 + the signal number.
 // (With spawnSync the handler could only run after the step had ended, and the check went on.)
 // The "exit" event also follows an uncaught exception: the link is removed then too.
-let currentStep = null;
+// A step that does not end on SIGTERM (it ignores the signal, or hangs) is killed with SIGKILL after
+// STOP_GRACE_MS (POSIX; taskkill /F on Windows is already forced); if even that does not end it, its
+// process id is printed so that the user can end it (it would otherwise go on running, and writing
+// into the restore folder, after this script has ended).
+const STOP_GRACE_MS = 3000;
+let currentStep = null; // set while a step runs; cleared only when it has really ended (runStep)
 const running = (child) => !!child && child.exitCode === null && child.signalCode === null;
-// → the stopped step (or null).
-function stopStep() {
+// Stop the running step: SIGTERM (force: SIGKILL). → the step (or null when none is running).
+function stopStep(force = false) {
   const child = currentStep;
-  currentStep = null;
   if (!running(child)) return null;
   try {
     // npm.cmd runs through cmd.exe on Windows: stop the whole tree, not only the shell.
     if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    else child.kill('SIGTERM');
+    else child.kill(force ? 'SIGKILL' : 'SIGTERM');
   } catch { /* already gone */ }
   return child;
 }
-process.on('exit', () => { stopStep(); unlinkModules(); });
+// → true when the step has ended within `ms`.
+const endedWithin = (child, ms) => new Promise((res) => {
+  if (!running(child)) { res(true); return; }
+  const timer = setTimeout(() => res(!running(child)), ms);
+  child.once('exit', () => { clearTimeout(timer); res(true); });
+});
+// The process is ending: nothing can be waited for any more, so a running step is killed at once.
+process.on('exit', () => { stopStep(true); unlinkModules(); });
 let interrupted = false;
 let interruption = null; // the running signal handler (it ends the process)
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
@@ -62,8 +73,13 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
         const child = stopStep();
         unlinkModules();
         console.error(`\n[復元確認 NG] 中断されました（${sig}）`);
-        // Wait (briefly) until the stopped step has really ended, so it is not left behind.
-        if (running(child)) await Promise.race([new Promise((r) => child.once('close', r)), new Promise((r) => setTimeout(r, 3000))]);
+        // Wait until the stopped step has really ended, so that it is not left behind.
+        if (child && !(await endedWithin(child, STOP_GRACE_MS))) {
+          stopStep(true);
+          if (!(await endedWithin(child, 2000))) {
+            console.error(`[注意] 実行中だった処理（PID ${child.pid}）が終了しません。タスクマネージャー（Windows）や kill -9 ${child.pid} で終了させてください。`);
+          }
+        }
         process.exit(128 + ((constants.signals && constants.signals[sig]) || 0));
       })();
     });
