@@ -353,6 +353,11 @@ describe('a NUL in UTF-8 text is not "not UTF-8"; UTF-16 without a BOM still is 
     assert.equal(F.maxIdInText('# Task Archive\n\n### TASK-1\u000050 | x\n**Status**: done\n'), 150);
     assert.equal(F.maxIdInText('### TASK-007 | a\n'), 7);
   });
+  test('the line shown with the NUL never starts in the middle of an emoji (no false U+FFFD)', () => {
+    const lines = plain(F.nulCharProblems('😀' + 'x'.repeat(39) + '\0end'))[0].lines;
+    assert.ok(!lines[0].includes('\uFFFD'), lines[0]);
+    assert.match(lines[0], /^1: 😀x+\u2400end$/);
+  });
   test('a run of NULs (e.g. the damaged end of a file) is nul-char too, not UTF-16', () => {
     const text = board + '\0'.repeat(300);
     assert.equal(F.decodeUtf8(new TextEncoder().encode(text)).valid, true);

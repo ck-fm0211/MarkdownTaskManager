@@ -113,7 +113,11 @@
         function visibleLine(line) {
             const s = String(line);
             const at = Math.max(0, firstUnwritable(s));
-            const from = Math.max(0, at - 40);
+            let from = Math.max(0, at - 40);
+            // Never start in the middle of a surrogate pair (a correct emoji would be shown as U+FFFD).
+            const isLow = (k) => s.charCodeAt(k) >= 0xDC00 && s.charCodeAt(k) <= 0xDFFF;
+            const isHigh = (k) => s.charCodeAt(k) >= 0xD800 && s.charCodeAt(k) <= 0xDBFF;
+            if (from > 0 && isLow(from) && isHigh(from - 1)) from--;
             let out = '';
             for (let i = from; i < s.length && i < from + 100; i++) {
                 const c = s.charCodeAt(i);
