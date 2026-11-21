@@ -784,7 +784,7 @@ describe('review round 8 (ops)', () => {
     assert.equal(c.code, 1, c.out);
     assert.match(c.out, new RegExp(`kanban\\.md: NUL 文字.*${line} 行目にあります（全 1 個）`));
     assert.match(c.out, new RegExp(`${line}: before␀after`));
-    assert.doesNotMatch(c.out, /UTF-8 ではありません/);
+    assert.doesNotMatch(c.out, /kanban\.md: UTF-8 ではありません/);
     assert.match(c.out, /\[NG\]/);
     assert.match(c.out, /次の ID: （NUL 文字のあるファイルがあるため決められません）/);
     const n = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
@@ -809,8 +809,20 @@ describe('review round 8 (ops)', () => {
     writeFileSync(join(dir3, 'archive.md'), Buffer.concat([ja.subarray(0, inside), Buffer.alloc(200)]));
     const c3 = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir3]);
     assert.match(c3.out, /archive\.md: NUL 文字.*行目にあります/);
-    assert.doesNotMatch(c3.out, /UTF-8 ではありません/, 'not "save it again as UTF-8"');
+    assert.doesNotMatch(c3.out, /archive\.md: UTF-8 ではありません/, 'not "save it again as UTF-8"');
     assert.match(c3.out, /次の ID: （NUL 文字のあるファイルがあるため決められません）/);
+    // The guidance names the rest of the cut character ("�" next to "␀"), and it is right: deleting only
+    // the NUL bytes leaves a broken character ("not UTF-8"), deleting that rest too repairs the file.
+    assert.match(c3.out, /␀ のすぐ隣の � は NUL で切れた文字の残り/);
+    assert.match(c3.out, /\d+: 請?\uFFFD\u2400/);
+    const cutBytes = readFileSync(join(dir3, 'archive.md'));
+    const nulsOnly = cutBytes.subarray(0, cutBytes.indexOf(0));
+    writeFileSync(join(dir3, 'archive.md'), nulsOnly);
+    assert.match(node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir3]).out, /archive\.md: UTF-8 ではありません/);
+    writeFileSync(join(dir3, 'archive.md'), nulsOnly.subarray(0, nulsOnly.length - 1)); // the 1 byte left of "請"
+    const fixed = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir3]);
+    assert.doesNotMatch(fixed.out, /archive\.md: (UTF-8 ではありません|NUL 文字)/, fixed.out);
+    assert.match(fixed.out, /次の ID: TASK-\d+/);
     // A NUL in a task's text shows as "␀" in the warning lines too (no raw NUL on the terminal).
     const dir4 = tmp();
     writeFileSync(join(dir4, 'kanban.md'), kanbanWith('').replace('**Status**: todo', '**Status**: to\0do'));

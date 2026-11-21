@@ -55,7 +55,7 @@ function printProblems(label, list) {
   for (const p of list) {
     if (p.code === 'nul-char') {
       // Valid UTF-8 with a NUL (U+0000): saving again as UTF-8 does not remove it — say where it is.
-      console.log(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
+      console.log(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。␀ のすぐ隣の � は NUL で切れた文字の残りなので、それも削除してください（NUL のバイトだけを消すと壊れた文字が残り、「UTF-8 ではありません」と表示されます）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
       (p.lines || []).forEach((l) => console.log(`      ${l}`));
       continue;
     }

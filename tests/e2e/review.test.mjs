@@ -927,7 +927,7 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.deepEqual(await page.evaluate(() => (session.blocked.archive || []).map((p) => p.code)), ['nul-char']);
     await page.click('#newTaskBtn');
     assert.match(await notificationText(page), /archive\.md contains NUL characters/);
-    assert.doesNotMatch(await page.evaluate(() => document.getElementById('syncBannerDetail').textContent), /not UTF-8/);
+    assert.doesNotMatch(await page.evaluate(() => document.getElementById('syncBannerDetail').textContent), /This file is not UTF-8/);
   });
 
   it('a NUL in valid UTF-8 opens read-only as "nul-char" with its line; UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', async ({ page }) => {
@@ -938,7 +938,7 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.deepEqual(await page.evaluate(() => session.blocked.kanban.map((p) => [p.code, p.line])), [['nul-char', lineNo]]);
     const banner = await page.evaluate(() => document.getElementById('syncBannerDetail').textContent);
     assert.match(banner, new RegExp(`NUL[\\s\\S]*line ${lineNo}[\\s\\S]*${lineNo}: before␀after`));
-    assert.doesNotMatch(banner, /not UTF-8/);
+    assert.doesNotMatch(banner, /This file is not UTF-8/);
     // Guard: UTF-16BE without a BOM (ASCII only, valid UTF-8 byte by byte) stays "not UTF-8".
     const be = [];
     for (const ch of board(task(1, 'A'), { lastId: 1 })) { const c = ch.charCodeAt(0); if (c < 0x80) be.push(0, c); }
