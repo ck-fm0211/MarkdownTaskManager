@@ -636,7 +636,7 @@ describe('review round 8 (ops)', () => {
     const proj = projectCopy();
     // Many files: removing the extracted copy takes a while, like an installed node_modules.
     mkdirSync(join(proj, 'bulk'));
-    for (let i = 0; i < 4000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
+    for (let i = 0; i < 10000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
     const zip = backupOf(proj);
     const temp = tmp('mtm-verify-tmp-');
     const v = verifyInBackground(proj, [zip, '--reuse-node-modules'], { TMPDIR: temp, TMP: temp, TEMP: temp });
@@ -696,7 +696,8 @@ describe('review round 8 (ops)', () => {
     const copies = { copy1: 'kanban - コピー.md', copy2: 'kanban-DESKTOP-ABC123.md', copy3: 'kanban (2).md', copy4: 'Archive - Copy.md' };
     for (const [d, f] of Object.entries(copies)) { mkdirSync(join(proj, d)); writeFileSync(join(proj, d, f), d === 'copy4' ? readFileSync(join(ROOT, 'examples', 'archive.md'), 'utf8') : boardMd); }
     mkdirSync(join(proj, 'copy5'));
-    writeFileSync(join(proj, 'copy5', 'kanban-PC2.md'), Buffer.from(boardMd, 'utf16le')); // saved as UTF-16
+    // Saved as UTF-16; a lower-case name that no copy-name rule takes: only the content check finds it.
+    writeFileSync(join(proj, 'copy5', 'kanban-old16.md'), Buffer.from(boardMd, 'utf16le'));
     // The usual copy names count whatever the content (also empty or a dummy text).
     const byName = { copy6: ['kanban - コピー.md', 'x\n'], copy7: ['Copy of kanban.md', ''], copy8: ['kanban - Copy (2).md', 'x'], copy9: ['archive-LAPTOP-01.md', ''], copy10: ['kanban copy 2.md', 'x'] };
     for (const [d, [f, text]] of Object.entries(byName)) { mkdirSync(join(proj, d)); writeFileSync(join(proj, d, f), text); }
