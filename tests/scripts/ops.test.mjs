@@ -10,7 +10,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync, spawn } from 'node:child_process';
-import { readZip } from '../../scripts/lib/zip.mjs';
+import { readZip, writeZip } from '../../scripts/lib/zip.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const isWin = process.platform === 'win32';
@@ -646,6 +646,26 @@ describe('review round 8 (ops)', () => {
     const r = await v.exited;
     assert.equal(sent, true, `the signal reached the running script:\n${v.output()}`);
     assert.doesNotMatch(v.output(), /復元確認 OK/);
+    assert.match(v.output(), /中断されました（SIGTERM）/);
+    assert.equal(r.code, 143, v.output());
+  });
+
+  test('restore:verify: a check that fails after a signal arrived during synchronous work still ends with 128 + the signal number (round 8: review 低-2)', { skip: winSignals, timeout: 240000 }, async () => {
+    const proj = projectCopy();
+    mkdirSync(join(proj, 'bulk'));
+    for (let i = 0; i < 20000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
+    const good = backupOf(proj);
+    // The same ZIP with one file changed: the SHA-256 check after the (long, synchronous) extraction fails.
+    const entries = readZip(good).map((e) => (e.name === 'bulk/f19999.txt' ? { ...e, data: Buffer.from('changed\n') } : e));
+    const zip = join(tmp(), 'changed.zip');
+    writeZip(zip, entries);
+    const v = verifyInBackground(proj, [zip, '--reuse-node-modules']);
+    let sent = null;
+    // "展開先:" is printed right before the extraction of the 20000 files starts.
+    v.onOutput((o) => { if (sent === null && /展開先: /.test(o)) sent = v.child.kill('SIGTERM'); });
+    const r = await v.exited;
+    assert.equal(sent, true, v.output());
+    assert.match(v.output(), /SHA-256 が一致しません: bulk\/f19999\.txt/, 'the check itself failed');
     assert.match(v.output(), /中断されました（SIGTERM）/);
     assert.equal(r.code, 143, v.output());
   });

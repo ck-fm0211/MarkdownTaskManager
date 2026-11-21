@@ -30,7 +30,15 @@ function unlinkModules() {
   try { if (lstatSync(linkedModules).isSymbolicLink()) unlinkSync(linkedModules); } catch { /* not there */ }
   linkedModules = null;
 }
-function fail(msg) { unlinkModules(); console.error(`\n[復元確認 NG] ${msg}`); process.exit(1); }
+// Ends the check with NG. A signal that arrived during the synchronous work before (extracting, hashing,
+// the checks after the build) is handled first, so the exit code is then 128 + the signal number as on
+// every other interruption (checkpoint). Always called as `await fail(…)`.
+async function fail(msg) {
+  unlinkModules();
+  console.error(`\n[復元確認 NG] ${msg}`);
+  await checkpoint();
+  process.exit(1);
+}
 // npm ci / the build run asynchronously (runStep): while one runs, the event loop is free, so a
 // signal sent to this script alone (kill <pid>, Ctrl+C, a closed console window) is handled at once:
 // the running step is stopped, the link is removed and the exit code is 128 + the signal number.
@@ -93,12 +101,12 @@ async function checkpoint() {
   await new Promise((r) => setImmediate(r));
   if (interrupted) await interruption;
 }
-if (!zipPath) fail('使い方: npm run restore:verify -- <backup.zip> [--dest <空のフォルダー>] [--keep] [--offline]');
+if (!zipPath) await fail('使い方: npm run restore:verify -- <backup.zip> [--dest <空のフォルダー>] [--keep] [--offline]');
 
 let dest = opt('--dest');
 if (dest) {
   dest = resolve(dest);
-  if (existsSync(dest) && readdirSync(dest).length) fail(`展開先が空ではありません: ${dest}`);
+  if (existsSync(dest) && readdirSync(dest).length) await fail(`展開先が空ではありません: ${dest}`);
   mkdirSync(dest, { recursive: true });
 } else {
   dest = mkdtempSync(join(tmpdir(), 'mtm-restore-'));
@@ -107,11 +115,11 @@ console.log(`ZIP   : ${resolve(zipPath)}`);
 console.log(`展開先: ${dest}`);
 
 let entries;
-try { entries = readZip(resolve(zipPath)); } catch (e) { fail(`ZIP を読めません: ${e.message}`); }
+try { entries = readZip(resolve(zipPath)); } catch (e) { await fail(`ZIP を読めません: ${e.message}`); }
 
 for (const e of entries) {
   const n = normalize(e.name);
-  if (isAbsolute(n) || n.startsWith('..') || e.name.includes('..' + '/') || /^[A-Za-z]:/.test(e.name)) fail(`不正なパス: ${e.name}`);
+  if (isAbsolute(n) || n.startsWith('..') || e.name.includes('..' + '/') || /^[A-Za-z]:/.test(e.name)) await fail(`不正なパス: ${e.name}`);
   const out = join(dest, n);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, e.data, { flag: 'wx' });
@@ -119,12 +127,12 @@ for (const e of entries) {
 console.log(`展開  : ${entries.length} ファイル`);
 
 const manifestPath = join(dest, '_backup_info', 'manifest.json');
-if (!existsSync(manifestPath)) fail('_backup_info/manifest.json がありません（このツールで作った ZIP ではない？）');
+if (!existsSync(manifestPath)) await fail('_backup_info/manifest.json がありません（このツールで作った ZIP ではない？）');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 for (const f of manifest.files) {
   const p = join(dest, f.path);
-  if (!existsSync(p)) fail(`ファイルがありません: ${f.path}`);
-  if (sha256(readFileSync(p)) !== f.sha256) fail(`SHA-256 が一致しません: ${f.path}`);
+  if (!existsSync(p)) await fail(`ファイルがありません: ${f.path}`);
+  if (sha256(readFileSync(p)) !== f.sha256) await fail(`SHA-256 が一致しません: ${f.path}`);
 }
 console.log(`検証  : manifest の ${manifest.files.length} ファイルの SHA-256 一致`);
 
@@ -173,18 +181,18 @@ const reuse = args.includes('--reuse-node-modules');
 const linked = join(dest, 'node_modules');
 if (reuse) {
   const src = join(ROOT, 'node_modules');
-  if (!existsSync(src)) fail(`--reuse-node-modules: 開発フォルダーに node_modules がありません（${src}）。先に開発フォルダーで npm ci を実行してください。`);
-  if (existsSync(linked)) fail('--reuse-node-modules: 展開先に node_modules が既にあります');
+  if (!existsSync(src)) await fail(`--reuse-node-modules: 開発フォルダーに node_modules がありません（${src}）。先に開発フォルダーで npm ci を実行してください。`);
+  if (existsSync(linked)) await fail('--reuse-node-modules: 展開先に node_modules が既にあります');
   // A directory junction on Windows (no administrator right needed), a symlink elsewhere.
   // Only the link itself is removed later (unlinkModules), never what it points to.
-  try { symlinkSync(src, linked, isWin ? 'junction' : 'dir'); linkedModules = linked; } catch (e) { fail(`node_modules をリンクできません: ${e.message}`); }
+  try { symlinkSync(src, linked, isWin ? 'junction' : 'dir'); linkedModules = linked; } catch (e) { await fail(`node_modules をリンクできません: ${e.message}`); }
   console.log('依存  : 開発フォルダーの node_modules を使用（npm ci は実行しません。ロックファイルからのインストールは未確認）');
 } else if (!args.includes('--skip-install')) {
   const ciArgs = ['ci', '--no-audit', '--no-fund', args.includes('--offline') ? '--offline' : '--prefer-offline'];
   await checkpoint();
   console.log(`実行  : npm ${ciArgs.join(' ')}`);
   const r = await runStep(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
-  if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${lastLines(r.output, 15)}`);
+  if (r.status !== 0) await fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${lastLines(r.output, 15)}`);
 }
 
 await checkpoint();
@@ -192,15 +200,15 @@ console.log('実行  : node build.mjs --out task-manager.restore-check.html');
 const b = await runStep(process.execPath, ['build.mjs', '--out', 'task-manager.restore-check.html']);
 await checkpoint();
 if (b.status !== 0) {
-  fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${lastLines(b.output, 10)}`);
+  await fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${lastLines(b.output, 10)}`);
 }
 const builtPath = join(dest, 'task-manager.restore-check.html');
-if (!existsSync(builtPath)) fail('ビルドは終了しましたが、出力ファイル（task-manager.restore-check.html）がありません（build.mjs が作業途中の可能性）');
+if (!existsSync(builtPath)) await fail('ビルドは終了しましたが、出力ファイル（task-manager.restore-check.html）がありません（build.mjs が作業途中の可能性）');
 const built = embeddedBuildInfo(readFileSync(builtPath, 'utf8'));
-if (!built) fail('ビルドの出力にビルド情報（mtm-build）がありません（build.mjs が作業途中の可能性）');
+if (!built) await fail('ビルドの出力にビルド情報（mtm-build）がありません（build.mjs が作業途中の可能性）');
 console.log(`ビルド: 成功（source ${built.sourceHash}）`);
 if (manifest.build && built.sourceHash !== manifest.build.currentSourceHash) {
-  fail(`ビルド結果のソースハッシュ (${built.sourceHash}) がバックアップ時 (${manifest.build.currentSourceHash}) と一致しません`);
+  await fail(`ビルド結果のソースハッシュ (${built.sourceHash}) がバックアップ時 (${manifest.build.currentSourceHash}) と一致しません`);
 }
 if (existsSync(join(dest, 'task-manager.html'))) {
   const shipped = embeddedBuildInfo(readFileSync(join(dest, 'task-manager.html'), 'utf8'));
