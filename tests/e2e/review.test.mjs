@@ -724,3 +724,26 @@ describe('review round 7: text encoding', () => {
     assert.equal(await readFile(page, 'p', 'kanban.md'), start);
   });
 });
+
+describe('review round 7: task form and load warnings', () => {
+  it('load warnings of kanban.md AND archive.md stay visible after the folder is opened (round 7: review 4)', async ({ page }) => {
+    await createDir(page, 'p', {
+      'kanban.md': board(task(2, 'B', '**Due**: 2026-2-1'), { lastId: 2 }),
+      'archive.md': archive(task(1, 'A', '**Finished**: 2026-1-5', 'done')),
+    });
+    await openFolder(page, 'p'); // the folder picker: "Folder loaded" used to replace the warning
+    const text = await notificationText(page);
+    assert.match(text, /YYYY-MM-DD/);
+    assert.match(text, /TASK-002 Due: 2026-2-1/, 'kanban.md');
+    assert.match(text, /archive\.md TASK-001 Finished: 2026-1-5/, 'archive.md');
+    // Opening from the recent-projects list keeps it visible too.
+    await createDir(page, 'q', { 'kanban.md': board(task(1, 'Q'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'q');
+    await page.evaluate(() => { window.__projects = [{ handle: window.__mockFS.dir('q'), name: 'q', customName: '', lastAccessed: Date.now() }, { handle: window.__mockFS.dir('p'), name: 'p', customName: '', lastAccessed: Date.now() }]; return updateProjectSelector(); });
+    await page.selectOption('#projectSelector', '1');
+    await page.waitForFunction(() => session && session.dir.name === 'p');
+    await waitIdle(page);
+    assert.match(await notificationText(page), /archive\.md TASK-001 Finished: 2026-1-5/);
+  });
+
+});

@@ -52,6 +52,21 @@
 
         const NOT_UTF8 = (name) => ({ code: 'not-utf8', lines: [name] });
 
+        // Load warnings (duplicate ids, unknown status, dates that are not YYYY-MM-DD …) as one text.
+        function loadWarningsText(warnings) {
+            return (warnings || []).map(w => w.code === 'duplicate-id'
+                ? t('integrity.duplicate-id', { ids: (w.ids || []).join(', ') })
+                : `${t('integrity.' + w.code)} ${(w.lines || []).join(', ')}`).join(' / ');
+        }
+
+        // The success message after a project was opened (folder picker, recent-projects list, startup
+        // restore). It must not replace the load warnings that openProject() has just shown: they are
+        // kept after the message.
+        function notifyProjectOpened(message) {
+            const w = session && session.warnings && session.warnings.length ? loadWarningsText(session.warnings) : '';
+            showNotification(w ? `${message} — ${w}` : message, w ? 'error' : 'success');
+        }
+
         function applyArchiveText(s, text, notUtf8 = false) {
             const r = parseArchiveContent(text);
             archivedTasks = r.tasks;
@@ -106,6 +121,7 @@
             }
             const archive = await readForLoad(dir, 'archive.md');
             if (!live()) return false;
+            let archiveWarnings = [];
 
             // archive.md
             if (archive.error) {
@@ -117,7 +133,11 @@
                 s.files.archive.handle = archive.handle;
                 s.files.archive.baseline = archive.text;
                 s.files.archive.eol = detectEol(archive.text);
-                applyArchiveText(s, archive.text, archive.notUtf8);
+                const ar = applyArchiveText(s, archive.text, archive.notUtf8);
+                // archive.md's own warnings (e.g. dates that are not YYYY-MM-DD) are shown with the
+                // board's; duplicate ids are checked across both files below.
+                archiveWarnings = ar.warnings.filter(w => w.code !== 'duplicate-id')
+                    .map(w => ({ ...w, lines: (w.lines || []).map(l => `archive.md ${l}`) }));
             }
 
             if (kanban.exists) {
@@ -147,16 +167,13 @@
             session = s;
             const dups = findDuplicateIds(tasks, archivedTasks);
             if (dups.length) s.warnings.push({ code: 'duplicate-id', ids: dups });
+            s.warnings.push(...archiveWarnings);
 
             showBoardViews(true);
             updateAutocomplete();
             renderKanban();
             renderSyncBanner();
-            if (s.warnings.length) {
-                showNotification(s.warnings.map(w => w.code === 'duplicate-id'
-                    ? t('integrity.duplicate-id', { ids: (w.ids || []).join(', ') })
-                    : `${t('integrity.' + w.code)} ${(w.lines || []).join(', ')}`).join(' / '), 'error');
-            }
+            if (s.warnings.length) showNotification(loadWarningsText(s.warnings), 'error');
 
             if (!kanban.exists) {
                 const created = await enqueueWrite(async () => {

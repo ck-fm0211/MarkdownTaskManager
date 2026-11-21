@@ -198,7 +198,7 @@
                 const ok = await openProject(project.handle, { skipLeaveCheck: true });
                 if (ok) {
                     if (!(await saveDirectoryHandle(project.handle))) console.warn('recent-projects list not updated');
-                    showNotification(t('notif.projectLoaded', {name: project.customName || project.name}), 'success');
+                    notifyProjectOpened(t('notif.projectLoaded', {name: project.customName || project.name}));
                 }
                 await updateProjectSelector();
             } catch (error) {
@@ -297,7 +297,7 @@
                         const ok = await openProject(savedHandle, { skipLeaveCheck: true });
                         await updateProjectSelector(); // Show project selector
                         if (ok) {
-                            showNotification(t('notif.projectRestored'), 'success');
+                            notifyProjectOpened(t('notif.projectRestored'));
                             return true;
                         }
                     } else {
@@ -345,7 +345,7 @@
                 // Update project selector now that kanban is visible
                 await updateProjectSelector();
 
-                if (ok) showNotification(t('notif.folderLoaded'), 'success');
+                if (ok) notifyProjectOpened(t('notif.folderLoaded'));
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     showNotification(t('notif.folderError'), 'error');
