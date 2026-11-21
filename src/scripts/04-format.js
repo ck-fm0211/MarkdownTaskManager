@@ -81,9 +81,13 @@
             }
         }
 
-        // 'le' | 'be' when the bytes look like UTF-16 without a BOM: at least a quarter of the bytes at
-        // one parity are NUL (an ASCII character in UTF-16 is "X\0" (LE) / "\0X" (BE)) and the other
-        // parity has almost none. A few NULs in UTF-8 text, or a run of NULs (both parities), are not.
+        // 'le' | 'be' when the bytes look like UTF-16 without a BOM:
+        // - at least a quarter of the bytes at one parity are NUL (an ASCII character in UTF-16 is "X\0" (LE) /
+        //   "\0X" (BE)) and the other parity has almost none, or
+        // - (nearly) every line break is a UTF-16 one: "\n\0" at an even offset (LE) / "\0\n" at an odd offset
+        //   (BE). This also finds a file of mostly kana and full-width spaces (U+3000 is "\0\x30" in LE, so its
+        //   NULs are at the other parity) that happens to be valid UTF-8.
+        // A few NULs typed into UTF-8 text, or a run of NULs (both parities), are neither.
         function utf16WithoutBom(bytes) {
             const b = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
             const n = b.length;
@@ -92,6 +96,15 @@
             const many = (k, of) => of > 0 && k * 4 >= of;
             if (many(odd, n >> 1) && even * 8 <= odd) return 'le';
             if (many(even, (n + 1) >> 1) && odd * 8 <= even) return 'be';
+            let lf = 0, leLf = 0, beLf = 0;
+            for (let i = 0; i < n; i++) {
+                if (b[i] !== 0x0A) continue;
+                lf++;
+                if (!(i & 1) && b[i + 1] === 0) leLf++;
+                if ((i & 1) && b[i - 1] === 0) beLf++;
+            }
+            if (lf >= 2 && leLf * 10 >= lf * 9) return 'le';
+            if (lf >= 2 && beLf * 10 >= lf * 9) return 'be';
             return null;
         }
 

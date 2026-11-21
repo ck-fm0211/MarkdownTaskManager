@@ -359,7 +359,10 @@ describe('a NUL in UTF-8 text is not "not UTF-8"; UTF-16 without a BOM still is 
     assert.equal(plain(F.parseKanbanContent(text).problems).find((x) => x.code === 'nul-char').count, 301);
   });
   test('guard: UTF-16LE / UTF-16BE without a BOM stay "not UTF-8", also with CJK characters that happen to decode', () => {
-    for (const s of ['# Task Archive\n### TASK-004 | d\n**Status**: done\n', '# Archive\n### TASK-004 | あい\n**Status**: done\n']) {
+    // The last one is mostly hiragana and full-width spaces (valid UTF-8 byte by byte; U+3000 puts its NUL at
+    // the other byte parity): its line breaks show it is UTF-16.
+    for (const s of ['# Task Archive\n### TASK-004 | d\n**Status**: done\n', '# Archive\n### TASK-004 | あい\n**Status**: done\n',
+      '# Task Archive\n### TASK-004 | ' + 'あ\u3000'.repeat(20) + '\n**Status**: done\n']) {
       const le = Buffer.from(s, 'utf16le');
       assert.equal(F.decodeUtf8(le).valid, false, 'LE');
       assert.equal(F.decodeUtf8(Buffer.from(le).swap16()).valid, false, 'BE');
