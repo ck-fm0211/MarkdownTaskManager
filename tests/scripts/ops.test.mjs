@@ -483,7 +483,7 @@ describe('review round 6 (ops)', () => {
 
   test('restore:verify --reuse-node-modules removes its link on Ctrl+C (round 6: review 2-6)', { skip: isWin && 'POSIX process groups', timeout: 120000 }, async () => {
     const proj = projectCopy();
-    writeFileSync(join(proj, 'build.mjs'), 'setInterval(() => {}, 1000); // a build that never ends\n');
+    writeFileSync(join(proj, 'build.mjs'), 'setTimeout(() => {}, 30000); // a build that takes long\n');
     const out = tmp();
     assert.equal(node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json') }).code, 0);
     const zip = join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
@@ -534,5 +534,38 @@ describe('review round 7 (ops)', () => {
     const c = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
     assert.equal(c.code, 1, c.out);
     assert.match(c.out, /archive\.md: UTF-8 ではありません/);
+  });
+
+  test('restore:verify --reuse-node-modules: a signal sent to the script alone stops it at once (round 7: review 2)', { timeout: 180000 }, async () => {
+    const proj = projectCopy();
+    // A slow build that writes its process id (it runs in the restore folder).
+    writeFileSync(join(proj, 'build.mjs'), "import { writeFileSync } from 'node:fs';\nwriteFileSync('build.pid', String(process.pid));\nsetTimeout(() => {}, 20000);\n");
+    const out = tmp();
+    assert.equal(node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json') }).code, 0);
+    const zip = join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    for (const sig of ['SIGTERM', 'SIGINT']) {
+      const dest = join(tmp(), 'restore');
+      const child = spawn(process.execPath, ['scripts/verify-restore.mjs', zip, '--reuse-node-modules', '--dest', dest], { cwd: proj, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', (d) => { output += d; });
+      child.stderr.on('data', (d) => { output += d; });
+      const exited = new Promise((res) => child.on('exit', (code, signal) => res({ code, signal, at: Date.now() })));
+      const deadline = Date.now() + 60000;
+      while (!existsSync(join(dest, 'build.pid')) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50));
+      const buildPid = Number(readFileSync(join(dest, 'build.pid'), 'utf8'));
+      assert.ok(existsSync(join(dest, 'node_modules')), 'the link was made');
+      const sent = Date.now();
+      child.kill(sig); // to the script only (not to its process group)
+      const r = await exited;
+      assert.ok(r.at - sent < 5000, `${sig}: ended ${r.at - sent} ms after the signal (not after the build)`);
+      assert.notEqual(r.code, 0, `${sig}: ${output}`);
+      assert.doesNotMatch(output, /復元確認 OK/);
+      assert.match(output, /中断/);
+      assert.ok(!existsSync(join(dest, 'node_modules')), `${sig}: the node_modules link was removed`);
+      await new Promise((res) => setTimeout(res, 300));
+      assert.equal(alive(buildPid), false, `${sig}: the build was stopped too`);
+    }
+    assert.ok(existsSync(join(ROOT, 'node_modules', 'html-minifier-terser')), 'the dev node_modules is intact');
   });
 });

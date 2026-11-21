@@ -10,9 +10,9 @@
 // The original dev folder and the ZIP are only read.
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
 import { join, resolve, dirname, isAbsolute, normalize } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, constants } from 'node:os';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readZip } from './lib/zip.mjs';
 import { embeddedBuildInfo } from './lib/source-hash.mjs';
 import { ROOT } from './lib/config.mjs';
@@ -30,12 +30,40 @@ function unlinkModules() {
   linkedModules = null;
 }
 function fail(msg) { unlinkModules(); console.error(`\n[復元確認 NG] ${msg}`); process.exit(1); }
-// Also on an unexpected error (the "exit" event follows an uncaught exception too) and on Ctrl+C /
-// a closed console window: with a listener, the signal does not kill this process at once; the
-// build / npm ci run by spawnSync gets it, ends, and the failure path removes the link.
-process.on('exit', unlinkModules);
+// npm ci / the build run asynchronously (runStep): while one runs, the event loop is free, so a
+// signal sent to this script alone (kill <pid>, Ctrl+C, a closed console window) is handled at once:
+// the running step is stopped, the link is removed and the exit code is 128 + the signal number.
+// (With spawnSync the handler could only run after the step had ended, and the check went on.)
+// The "exit" event also follows an uncaught exception: the link is removed then too.
+let currentStep = null;
+const running = (child) => !!child && child.exitCode === null && child.signalCode === null;
+// → the stopped step (or null).
+function stopStep() {
+  const child = currentStep;
+  currentStep = null;
+  if (!running(child)) return null;
+  try {
+    // npm.cmd runs through cmd.exe on Windows: stop the whole tree, not only the shell.
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+    else child.kill('SIGTERM');
+  } catch { /* already gone */ }
+  return child;
+}
+process.on('exit', () => { stopStep(); unlinkModules(); });
+let interrupted = false;
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
-  try { process.on(sig, () => fail(`中断されました（${sig}）`)); } catch { /* signal not available on this OS */ }
+  try {
+    process.on(sig, async () => {
+      if (interrupted) return;
+      interrupted = true;
+      const child = stopStep();
+      unlinkModules();
+      console.error(`\n[復元確認 NG] 中断されました（${sig}）`);
+      // Wait (briefly) until the stopped step has really ended, so it is not left behind.
+      if (running(child)) await Promise.race([new Promise((r) => child.once('close', r)), new Promise((r) => setTimeout(r, 3000))]);
+      process.exit(128 + ((constants.signals && constants.signals[sig]) || 0));
+    });
+  } catch { /* signal not available on this OS */ }
 }
 if (!zipPath) fail('使い方: npm run restore:verify -- <backup.zip> [--dest <空のフォルダー>] [--keep] [--offline]');
 
@@ -75,7 +103,24 @@ console.log(`検証  : manifest の ${manifest.files.length} ファイルの SHA
 const isWin = process.platform === 'win32';
 // npm is npm.cmd on Windows and needs a shell; Node itself must NOT go through a shell
 // (C:\Program Files\nodejs\node.exe contains a space and would be split).
-const run = (cmd, a, viaShell = false) => spawnSync(cmd, a, { cwd: dest, encoding: 'utf8', shell: viaShell, env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
+// → { status, output } (stdout + stderr).
+function runStep(cmd, a, viaShell = false) {
+  return new Promise((res) => {
+    let output = '';
+    let child;
+    try {
+      child = spawn(cmd, a, { cwd: dest, shell: viaShell, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
+    } catch (e) { res({ status: null, output: e.message }); return; }
+    currentStep = child;
+    child.stdout.on('data', (d) => { output += d; });
+    child.stderr.on('data', (d) => { output += d; });
+    child.on('error', (e) => { if (currentStep === child) currentStep = null; if (!interrupted) res({ status: null, output: output + e.message }); });
+    child.on('close', (code) => {
+      if (currentStep === child) currentStep = null;
+      if (!interrupted) res({ status: code, output }); // interrupted: the signal handler ends the process
+    });
+  });
+}
 
 const reuse = args.includes('--reuse-node-modules');
 const linked = join(dest, 'node_modules');
@@ -90,14 +135,14 @@ if (reuse) {
 } else if (!args.includes('--skip-install')) {
   const ciArgs = ['ci', '--no-audit', '--no-fund', args.includes('--offline') ? '--offline' : '--prefer-offline'];
   console.log(`実行  : npm ${ciArgs.join(' ')}`);
-  const r = run(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
-  if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${(r.stdout + r.stderr).trim().split('\n').slice(-15).join('\n')}`);
+  const r = await runStep(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
+  if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${r.output.trim().split('\n').slice(-15).join('\n')}`);
 }
 
 console.log('実行  : node build.mjs --out task-manager.restore-check.html');
-const b = run(process.execPath, ['build.mjs', '--out', 'task-manager.restore-check.html']);
+const b = await runStep(process.execPath, ['build.mjs', '--out', 'task-manager.restore-check.html']);
 if (b.status !== 0) {
-  fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${(b.stdout + b.stderr).trim().split('\n').slice(-10).join('\n')}`);
+  fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${b.output.trim().split('\n').slice(-10).join('\n')}`);
 }
 const builtPath = join(dest, 'task-manager.restore-check.html');
 if (!existsSync(builtPath)) fail('ビルドは終了しましたが、出力ファイル（task-manager.restore-check.html）がありません（build.mjs が作業途中の可能性）');
