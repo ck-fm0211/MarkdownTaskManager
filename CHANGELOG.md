@@ -21,7 +21,8 @@ Data protection
 - NUL detection split: UTF-16 without a BOM is recognised by NULs at one byte parity and stays "not UTF-8"; a
   NUL in valid UTF-8 is reported as `nul-char` with the line of the first one and the count (still
   read-only; the message says to delete it). App and CLI share the rule; `next-id` gives an id for such a
-  file. Other C0 control characters are not refused (they read back unchanged).
+  file; ids are counted with NULs removed (a NUL inside a `### TASK-` line no longer hides that id). Other C0
+  control characters are not refused (they read back unchanged).
 - `restore:verify`: a signal during the checks after the build or the removal of the temporary folder was
   ignored and the check ended "OK" with exit code 0 (synchronous rmSync). The folder is removed
   asynchronously and pending signals are handled before each step and right before "OK".
@@ -30,9 +31,10 @@ Data protection
 - `restore:verify`: step output is decoded as UTF-8 (a character split between pipe chunks became U+FFFD) and
   only its last 64 K characters are kept; the failure message shows at most 4000 characters (a long one was
   cut off on a pipe before the exit).
-- Backup with an unreadable configuration: copies of the task files ("kanban - コピー.md", "kanban (2).md",
-  OneDrive conflict copies, also UTF-16) keep their folder out of the ZIP; a .md named kanban*/archive* counts
-  only when its content is a task file, so notes and docs/ stay in.
+- Backup with an unreadable configuration: copies of the task files keep their folder out of the ZIP — the
+  usual copy names ("kanban - コピー.md", "kanban (2).md", "Copy of kanban.md", OneDrive conflict copies
+  "kanban-<PC name>.md") whatever their content, and any other .md named kanban*/archive* whose content is a
+  task file (also UTF-16, also `## TASK-` headers), so notes and docs/ stay in.
 
 App
 - Load warnings stay visible after 🔄, the automatic reload on focus (also with the archive dialog open) and
@@ -41,10 +43,10 @@ App
   updated is shown with the "loaded" message as an error instead of being hidden by a green one.
 
 Tests and docs
-- Regression tests for every item (unit 6, scripts 6, browser 9); all fail on `1b3c200` except three guard
+- Regression tests for every item (unit 7, scripts 6, browser 9); all fail on `1b3c200` except three guard
   tests (UTF-16 without a BOM stays "not UTF-8" in unit and CLI, other control characters are not refused).
   The test mock's saveDirectoryHandle returns true like the real one. The round 7 signal test is skipped on
-  Windows (child.kill() terminates there). 187 tests.
+  Windows (child.kill() terminates there). 188 tests.
 - SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING, AGENTS.md, AI_WORKFLOW.md and the Claude skill
   updated (NUL vs UTF-16, reload warnings, restore:verify signals and Windows forced termination, backup
   exclusion of copies).

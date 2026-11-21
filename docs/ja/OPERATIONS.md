@@ -90,12 +90,15 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
   書かれていない運用データフォルダーはわからないため、次のどれかを含むフォルダー（開発フォルダー直下と `examples/` を除く）を
   運用データとみなして除外し、注意を表示します（大文字・小文字は区別しません）。
   - `kanban.md` / `archive.md`、その退避・書き出し（`kanban.v1-backup.md`、`kanban.unsaved-….md` など。名前だけで判定）
-  - 名前が `kanban` / `archive` で始まる `.md` で、中身がタスクのファイルのもの（`### TASK-<番号>` の行、`<!-- Format: v2 -->`・
-    `<!-- Config: Last Task ID: … -->`、`## ⚙️ Configuration`、`**Columns**:` の行のどれかがある。先頭 64 KB を、NUL を除いて
-    調べるので UTF-16 のコピーも含みます）。「kanban - コピー.md」「kanban (2).md」や OneDrive の競合コピー
-    （「kanban-PC名.md」）など。中身で判定するため、`kanban-ideas.md` のようなメモや `docs/images/kanban-board.jpg` のある
-    フォルダーは除外しません。タスクが 1 件もなく、上の行もないコピー（中身が空に近いもの）は除外されません`--out` も `backupDir`（環境変数）もなければ
-  開発フォルダー内の `backups/` に出力します。
+  - よくあるコピーの名前（中身は問いません。空でも）: 「kanban - コピー.md」「kanban - Copy (2).md」「kanban (2).md」
+    「kanban copy.md」「Copy of kanban.md」、OneDrive の競合コピー「kanban-PC名.md」（PC 名が大文字・数字・`-` だけのもの。
+    例: `kanban-DESKTOP-ABC123.md`）。`archive` も同じ
+  - そのほか名前が `kanban` / `archive` で始まる `.md` で、中身がタスクのファイルのもの（`### TASK-<番号>` / `## TASK-<番号>` の行、
+    `<!-- Format: v2 -->`・`<!-- Config: Last Task ID: … -->`、`## ⚙️ Configuration`、`**Columns**:` の行のどれかがある。先頭 64 KB を、
+    NUL を除いて調べるので UTF-16 のコピーも含みます）。中身で判定するため、`kanban-ideas.md` のようなメモや
+    `docs/images/kanban-board.jpg` のあるフォルダーは除外しません（この形の名前で、上の行のない中身のファイルは除外されません）
+
+  `--out` も `backupDir`（環境変数）もなければ開発フォルダー内の `backups/` に出力します。
   `package.json` が壊れていると **npm 自体が起動しない**ため、そのときは `node scripts/backup.mjs`（オプションは同じ）
   を直接実行します。`tools\windows\backup.cmd` は最初から Node を直接実行します。
 - 含めるもの: `src/`、`build.mjs`、`package.json`、`package-lock.json`、`task-manager.html`、ドキュメント、LICENSE、
@@ -147,14 +150,17 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
      POSIX では SIGKILL で止めます。それでも終わらない場合は、その処理の PID を表示します（タスクマネージャーや `kill -9` で
      終了させてください）。
    - ビルドの後の確認・一時フォルダーの削除の間に届いた合図でも、「OK」を出さずに 128 ＋ シグナル番号で終わります（npm ci の前、
-     ビルドの前後、「OK」の直前に合図を確認します）。一時フォルダーの削除中に中断すると、一時フォルダーの一部が残ることがあります。
+     ビルドの前後、「OK」の直前に合図を確認します）。ただし、合図を確認する前に確認そのものが失敗した場合は、その失敗
+     （「[復元確認 NG] …」、終了コード 1）として終わります。どちらの場合も「OK」は出しません。一時フォルダーの削除中に中断すると、一時フォルダーの一部が残ることがあります。
      ZIP の展開・照合の最中に届いた合図は、次の確認の時点（npm ci / ビルドの開始前）で処理します。
    - 失敗の表示に出す `npm ci` / ビルドの出力は、最後の行（最大 4000 文字）だけです（出力は UTF-8 として読み、末尾 64K 文字だけを
      保持します）。
    - **Windows の強制終了**（タスクマネージャーの「タスクの終了」、`taskkill /F`、Node の `child.kill()` など）は、スクリプトが
      処理できません。この場合、展開先の `node_modules` のリンク（ジャンクション）が残ることがあります（残るのはリンクだけで、
-     開発フォルダーの `node_modules` は消えません）。残ったら展開先のフォルダーごと削除してください（エクスプローラーで
-     ジャンクションを削除しても、リンク先は削除されません）。POSIX の SIGKILL（`kill -9`）も同じです。
+     開発フォルダーの `node_modules` は消えません）。残ったら、先にリンクだけを外してから（コマンドプロンプトで
+     `rmdir "<展開先>\node_modules"`。`/s` を付けない）展開先のフォルダーを削除してください。Windows PowerShell 5.1 の
+     `Remove-Item -Recurse` は使わないでください（ジャンクションの先までたどるおそれがあるため）。どちらも実機では未確認です。
+     POSIX の SIGKILL（`kill -9`）でもリンク（シンボリックリンク）が残ることがあります（`rm "<展開先>/node_modules"` で外せます）。
    - Windows の `taskkill`・SIGBREAK / SIGHUP（コンソールを閉じた場合）・ジャンクションの作成と削除は、実機では未確認です。
 
 ## 4. 会社 PC へ持ち込むもの
