@@ -64,8 +64,8 @@ What was done.
   `Set-Content` / `Add-Content` / `Out-File` / `>` (they write Shift_JIS or UTF-16): the app then opens
   the file read-only. Use your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default).
 - Never write a NUL character (U+0000): the app opens such a file read-only. If `check` reports
-  `NUL 文字 … N 行目`, delete that character (saving as UTF-8 does not remove it); until then no new id
-  is given.
+  `NUL 文字 … N 行目`, delete that character (saving as UTF-8 does not remove it), and a `�` right next
+  to `␀` too (the rest of a character the NULs cut off); until then no new id is given.
 - Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` or `2026-1-5`).
 
 ## 🔄 Workflow

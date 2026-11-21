@@ -223,7 +223,9 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
 - **No NUL characters (U+0000).** A file containing one is opened read-only (editors and AI tools take it
   for a binary file, and NULs are often what a damaged file contains); `npm run tasks -- check` reports
   the line (`NUL 文字（U+0000…）が N 行目にあります`). Delete the character — saving as UTF-8 does not
-  remove it — and restore the file from the OneDrive version history if text around it is missing. Until
+  remove it. A `�` right next to `␀` in that line is the rest of a character the NULs cut off: delete those
+  bytes too (removing only the NUL bytes leaves a broken character, reported next as "not UTF-8").
+  Restore the file from the OneDrive version history if text around it is missing. Until
   then `next-id` and the app give no new id. The app itself refuses to write one.
 - Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` — that makes the board read-only until it
   is fixed; `2026-1-5` / `20261231` are kept but reported by `npm run tasks -- check` as `⚠ non-iso-date`,
