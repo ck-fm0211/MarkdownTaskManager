@@ -67,9 +67,13 @@
         // turn the bytes of a Shift_JIS (cp932) / UTF-16 file into U+FFFD, and a later save would
         // write the garbled text back. → { text, valid }: valid=false means "not UTF-8" (the text is
         // the lossy decoding, for display only; such a file must never be written).
+        // A NUL also means "not UTF-8": UTF-16 WITHOUT a BOM whose text is ASCII only is valid UTF-8
+        // byte by byte ("#\0 \0T\0…"), and none of its "### TASK-<n>" lines could be found (no text
+        // file of this app contains a NUL).
         function decodeUtf8(bytes) {
             try {
-                return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), valid: true };
+                const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+                return { text, valid: !text.includes('\0') };
             } catch (e) {
                 return { text: new TextDecoder('utf-8').decode(bytes), valid: false };
             }

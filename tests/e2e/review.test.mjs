@@ -703,3 +703,24 @@ describe('review round 6: form values that the inputs cannot show', () => {
     assert.equal(await page.evaluate(() => session.blocked.kanban), null, 'the saved file is not read-only');
   });
 });
+
+describe('review round 7: text encoding', () => {
+  // UTF-16LE WITHOUT a BOM: ASCII-only content is valid UTF-8 byte by byte (a NUL after each character).
+  const utf16leNoBom = (s) => Array.from(new Uint8Array(new Uint16Array([...s].map((c) => c.charCodeAt(0))).buffer));
+
+  it('a UTF-16 archive.md without a BOM is not UTF-8: no new task, no archive write (round 7: review 1)', async ({ page }) => {
+    const start = board(task(3, 'C', '', 'done'), { lastId: 3 });
+    await createDir(page, 'p', { 'kanban.md': start });
+    const bytes = utf16leNoBom(archive(task(4, 'archived D', '', 'done')));
+    await writeBytes(page, 'p', 'archive.md', bytes);
+    await openFolder(page, 'p');
+    assert.equal(await page.evaluate(() => (session.blocked.archive || []).map((p) => p.code).join()), 'not-utf8');
+    await page.click('#newTaskBtn');
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), false, 'the new-task form does not open');
+    assert.match(await notificationText(page), /not UTF-8/);
+    assert.equal((await page.evaluate(() => archiveTask(tasks[0]))).ok, false);
+    await waitIdle(page);
+    assert.deepEqual(await readBytes(page, 'p', 'archive.md'), bytes, 'archive.md bytes unchanged');
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start);
+  });
+});

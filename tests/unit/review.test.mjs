@@ -308,3 +308,18 @@ describe('dates that are not YYYY-MM-DD (round 6: review 2-3)', () => {
     assert.deepEqual(plain(r.warnings), []);
   });
 });
+
+// ----- Round 7: review of 9071e08..c966c91 -----
+
+describe('UTF-16 without a BOM is not UTF-8 (round 7: review 1)', () => {
+  // ASCII-only UTF-16 is VALID UTF-8 byte-wise (every second byte is NUL): the NUL decides.
+  const ascii = '# Task Archive\n### TASK-004 | d\n**Status**: done\n';
+  test('UTF-16LE / UTF-16BE without a BOM are reported as not UTF-8', () => {
+    assert.equal(F.decodeUtf8(Buffer.from(ascii, 'utf16le')).valid, false);
+    const be = Buffer.from(ascii, 'utf16le').swap16();
+    assert.equal(F.decodeUtf8(be).valid, false);
+  });
+  test('ordinary UTF-8 text is still valid', () => {
+    assert.equal(F.decodeUtf8(new TextEncoder().encode(ascii + '経理\n')).valid, true);
+  });
+});

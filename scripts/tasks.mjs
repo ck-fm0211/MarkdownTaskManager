@@ -78,7 +78,7 @@ if (cmd === 'where') {
   let bad = 0;
   let toFix = 0;
   console.log(`dataDir: ${dir}`);
-  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
+  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS・UTF-16 など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
   if (!k) { console.log('  kanban.md がありません'); bad++; } else {
     console.log(`kanban.md : ${active.length} タスク（V2=${k.formatV2}）`);
     printProblems('kanban.md', k.problems); bad += k.problems.length;

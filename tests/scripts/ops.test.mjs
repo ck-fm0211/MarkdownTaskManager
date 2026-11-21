@@ -520,3 +520,19 @@ describe('review round 6 (ops)', () => {
     assert.doesNotMatch(c.out, /次の ID: TASK-004/, 'check does not offer an id that may be in use');
   });
 });
+
+describe('review round 7 (ops)', () => {
+  const noEnv = { MTM_APP_DIR: '', MTM_DATA_DIR: '', MTM_BACKUP_DIR: '' };
+
+  test('tasks next-id / check: a UTF-16 archive.md WITHOUT a BOM is not UTF-8 either (round 7: review 1)', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'kanban.md'), '# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n');
+    writeFileSync(join(dir, 'archive.md'), Buffer.from('# Task Archive\n<!-- Format: v2 -->\n\n## Archives\n\n### TASK-004 | d\n**Status**: done\n', 'utf16le'));
+    const r = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
+    assert.equal(r.code, 1, r.out);
+    assert.doesNotMatch(r.out, /TASK-00\d/);
+    const c = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(c.code, 1, c.out);
+    assert.match(c.out, /archive\.md: UTF-8 ではありません/);
+  });
+});
