@@ -660,6 +660,7 @@ describe('review round 8 (ops)', () => {
     while (!existsSync(join(dest, 'build.pid')) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50));
     await new Promise((res) => setTimeout(res, 100)); // the build has installed its SIGTERM handler
     const buildPid = Number(readFileSync(join(dest, 'build.pid'), 'utf8'));
+    assert.ok(buildPid > 0, 'the build wrote its process id'); // never kill(0): that is the whole process group
     try {
       const sent = Date.now();
       v.child.kill('SIGTERM');
@@ -671,23 +672,51 @@ describe('review round 8 (ops)', () => {
       assert.equal(alive(buildPid), false, 'the build that ignored SIGTERM is not left running');
       assert.ok(!existsSync(join(dest, 'node_modules')), 'the link was removed');
     } finally {
-      try { process.kill(buildPid, 'SIGKILL'); } catch { /* already gone */ }
+      if (buildPid > 0) try { process.kill(buildPid, 'SIGKILL'); } catch { /* already gone */ }
     }
   });
 
-  test('restore:verify: the output of a step is decoded as UTF-8 text and only its end is kept (round 8: review 低-4)', { timeout: 120000 }, () => {
+  test('restore:verify: a character split between two chunks of a step\'s output stays one character (round 8: review 低-4)', { timeout: 120000 }, () => {
     const proj = projectCopy();
-    // A failing build with a lot of Japanese output: 20 lines of 90 KB each, split into pipe chunks
-    // at places that are not character boundaries.
-    writeFileSync(join(proj, 'build.mjs'), "const line = 'あ'.repeat(30000);\nfor (let i = 0; i < 20; i++) process.stdout.write(`${i}:${line}\\n`);\nprocess.stdout.write('最後の行: ビルド失敗（テスト）\\n');\nprocess.exitCode = 1;\n");
+    // A failing build. Before its last lines it prints 20 lines of 90 KB; each of the last three lines is
+    // written in two parts cut INSIDE its last character, with a pause between them, so the script
+    // reads them as two separate chunks (a chunk turned into a string on its own gives U+FFFD).
+    writeFileSync(join(proj, 'build.mjs'), [
+      "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));",
+      "const big = 'あ'.repeat(30000);",
+      "for (let i = 0; i < 20; i++) process.stdout.write(`${i}:${big}\\n`);",
+      "await sleep(200);",
+      "for (const text of ['境目1: あいう\\n', '境目2: かきく\\n', '境目3: さしす\\n']) {",
+      "  const b = Buffer.from(text);",
+      "  process.stdout.write(b.subarray(0, b.length - 2)); // 2 of the 3 bytes of the last character",
+      "  await sleep(150);",
+      "  process.stdout.write(b.subarray(b.length - 2));",
+      "  await sleep(150);",
+      "}",
+      "process.stdout.write('最後の行: ビルド失敗（テスト）\\n');",
+      "process.exitCode = 1;",
+    ].join('\n') + '\n');
     const zip = backupOf(proj);
     const r = node(proj, 'scripts/verify-restore.mjs', [zip, '--reuse-node-modules']);
     assert.equal(r.code, 1, r.out.slice(-2000));
     assert.match(r.out, /ビルドに失敗しました/);
-    assert.ok(!r.out.includes('\uFFFD'), 'no character was split into U+FFFD');
+    assert.ok(!r.out.includes('\uFFFD'), `no character was split into U+FFFD:\n${r.out.slice(-300)}`);
+    for (const line of ['境目1: あいう', '境目2: かきく', '境目3: さしす', '最後の行: ビルド失敗（テスト）']) assert.ok(r.out.includes(line), line);
     // The failure message shows the end only (written right before exit, a long one was cut off).
     assert.ok(r.out.length < 8000, `only the end of the output is shown (${r.out.length} characters printed)`);
-    assert.match(r.out, /最後の行: ビルド失敗（テスト）/);
+  });
+
+  test('restore:verify: only the end of a step\'s output is kept (more output than a string can hold) (round 8: review 低-4)', { timeout: 180000 }, () => {
+    const proj = projectCopy();
+    // About 630 M characters: more than the longest JavaScript string (about 537 M in V8). Kept whole,
+    // the output cannot be collected at all (RangeError: Invalid string length).
+    writeFileSync(join(proj, 'build.mjs'), "const mb = 'x'.repeat(1023) + '\\n';\nconst chunk = mb.repeat(1024);\nfor (let i = 0; i < 600; i++) process.stdout.write(chunk);\nprocess.stdout.write('最後の行: ビルド失敗（大量の出力）\\n');\nprocess.exitCode = 1;\n");
+    const zip = backupOf(proj);
+    const r = node(proj, 'scripts/verify-restore.mjs', [zip, '--reuse-node-modules']);
+    assert.equal(r.code, 1, r.out.slice(-2000));
+    assert.match(r.out, /ビルドに失敗しました/, r.out.slice(-2000));
+    assert.match(r.out, /最後の行: ビルド失敗（大量の出力）/);
+    assert.doesNotMatch(r.out, /Invalid string length/);
   });
 
   test('with an unreadable configuration, copies of the task files ("kanban - コピー.md", OneDrive conflict copies) are left out too (round 8: review 低-5)', () => {
@@ -744,7 +773,8 @@ describe('review round 8 (ops)', () => {
     const dir2 = tmp();
     writeFileSync(join(dir2, 'kanban.md'), readFileSync(join(ROOT, 'examples', 'kanban.md')));
     const arch = readFileSync(join(ROOT, 'examples', 'archive.md'));
-    writeFileSync(join(dir2, 'archive.md'), Buffer.concat([arch.subarray(0, arch.length >> 1), Buffer.alloc(arch.length - (arch.length >> 1))]));
+    const cut = arch.indexOf(0x0a, arch.length >> 1) + 1; // at a line break (never inside a character)
+    writeFileSync(join(dir2, 'archive.md'), Buffer.concat([arch.subarray(0, cut), Buffer.alloc(arch.length - cut)]));
     const n2 = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir2]);
     assert.equal(n2.code, 1, n2.out);
     assert.match(n2.out, /archive\.md に NUL 文字があります/);
