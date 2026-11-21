@@ -164,7 +164,7 @@ function runStep(cmd, a, viaShell = false) {
       child = spawn(cmd, a, { cwd: dest, shell: viaShell, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
     } catch (e) { res({ status: null, output: e.message }); return; }
     currentStep = child;
-    const collect = (d) => { output += d; if (output.length > 2 * OUTPUT_TAIL) output = tailOf(output); };
+    const collect = (d) => { output += d; if (output.length > OUTPUT_TAIL) output = tailOf(output); };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', collect);
