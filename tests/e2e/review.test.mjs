@@ -835,8 +835,10 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.deepEqual(await stateOf(page), { conflict: null, lastError: null, blocked: null });
     // Editing a subtask (prompt) is checked the same way.
     dialogs.queue.push('o\u0000ne');
+    const seenEdit = dialogs.seen.length;
     await page.evaluate(() => editSubtask('TASK-001', 0));
     await waitIdle(page);
+    assert.ok(dialogs.seen.slice(seenEdit).some((d) => d.type === 'alert' && /NOT saved[\s\S]*o\u2400ne/.test(d.message)), JSON.stringify(dialogs.seen.slice(seenEdit)));
     assert.equal(await readFile(page, 'p', 'kanban.md'), start());
     assert.deepEqual(await page.evaluate(() => tasks[0].subtasks.map((s) => s.text)), ['one']);
   });
@@ -866,8 +868,10 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.equal(await readFile(page, 'p', 'kanban.md'), start());
     assert.deepEqual(await page.evaluate(() => [config.columns[0].id, tasks[0].status]), ['todo', 'todo']);
     dialogs.queue.push('Later\u0000', 'later');
+    const seenAdd = dialogs.seen.length;
     await page.evaluate(() => addColumn());
     await waitIdle(page);
+    assert.ok(dialogs.seen.slice(seenAdd).some((d) => d.type === 'alert' && /columns were NOT changed[\s\S]*Later\u2400/.test(d.message)), JSON.stringify(dialogs.seen.slice(seenAdd)));
     assert.equal(await readFile(page, 'p', 'kanban.md'), start());
     assert.equal(await page.evaluate(() => config.columns.length), 3);
     assert.deepEqual(await stateOf(page), { conflict: null, lastError: null, blocked: null });
