@@ -97,7 +97,11 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
 // the build) is handled only when the event loop runs again. Before the next step, after the build
 // and right before "OK", the event loop gets that chance here; after a signal the script never goes
 // on (the handler above ends it with 128 + the signal number), so "OK" is never printed then.
+// It yields TWICE: a signal is handled in the I/O phase of the event loop, and one setImmediate can run
+// before that phase (when the code before it continued from an I/O callback, e.g. a finished step or an
+// fs promise); the second one always runs after it.
 async function checkpoint() {
+  await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
   if (interrupted) await interruption;
 }
