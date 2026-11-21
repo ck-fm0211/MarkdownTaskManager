@@ -689,6 +689,27 @@ describe('review round 8 (ops)', () => {
     assert.match(r.out, /最後の行: ビルド失敗（テスト）/);
   });
 
+  test('with an unreadable configuration, copies of the task files ("kanban - コピー.md", OneDrive conflict copies) are left out too (round 8: review 低-5)', () => {
+    const proj = projectCopy();
+    const boardMd = readFileSync(join(ROOT, 'kanban.md'), 'utf8');
+    const copies = { copy1: 'kanban - コピー.md', copy2: 'kanban-DESKTOP-ABC123.md', copy3: 'kanban (2).md', copy4: 'Archive - Copy.md' };
+    for (const [d, f] of Object.entries(copies)) { mkdirSync(join(proj, d)); writeFileSync(join(proj, d, f), d === 'copy4' ? readFileSync(join(ROOT, 'examples', 'archive.md'), 'utf8') : boardMd); }
+    mkdirSync(join(proj, 'copy5'));
+    writeFileSync(join(proj, 'copy5', 'kanban-PC2.md'), Buffer.from(boardMd, 'utf16le')); // saved as UTF-16
+    // Not task files: a note whose name starts with "kanban", a picture.
+    mkdirSync(join(proj, 'notes'));
+    writeFileSync(join(proj, 'notes', 'kanban-ideas.md'), '# カンバンの改善案\n\n- 列の色\n');
+    writeFileSync(join(proj, 'local.config.json'), '{ "dataDir": ');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: '' });
+    assert.equal(r.code, 0, r.out);
+    const names = readZip(zipIn(out)).map((e) => e.name);
+    for (const d of ['copy1/', 'copy2/', 'copy3/', 'copy4/', 'copy5/']) assert.ok(!names.some((n) => n.startsWith(d)), d);
+    for (const must of ['notes/kanban-ideas.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
+      '.claude/skills/markdown-task-manager/SKILL.md', 'examples/kanban.md', 'kanban.md', 'archive.md']) assert.ok(names.includes(must), must);
+    assert.match(r.out, /運用データの可能性があるため除外: copy1\//);
+  });
+
   const kanbanWith = (extra) => `# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n${extra}`;
 
   test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); next-id still gives an id (round 8: review 中-1)', () => {

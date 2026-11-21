@@ -15,7 +15,7 @@
 // regenerated (node_modules, caches, logs), earlier backups and anything that looks secret.
 // The ZIP is written as *.partial, read back and checked entry by entry, and only then renamed;
 // a failed run never leaves a file that looks like a valid backup. Sources are never modified.
-import { readdirSync, lstatSync, readFileSync, existsSync, mkdirSync, renameSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { readdirSync, lstatSync, readFileSync, existsSync, mkdirSync, renameSync, rmSync, mkdtempSync, writeFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, relative, resolve, basename, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -65,7 +65,7 @@ if (configBroken) {
         : `設定（${name}）: ${e.key} を解決できません（未定義の環境変数・文字列でない値など）`);
     console.warn(`[注意] 設定を読めません（${e.message}）。`);
   }
-  console.warn('[注意] 読めなかった設定は使いません。kanban.md / archive.md を含むフォルダー（開発フォルダー直下と examples/ を除く）は運用データとみなして除外します。--out がなく backupDir もわからなければ、開発フォルダー内の backups/ に出力します。');
+  console.warn('[注意] 読めなかった設定は使いません。運用データの可能性があるフォルダー（kanban.md / archive.md、その退避・書き出し（kanban.v1-backup.md など）、名前が kanban / archive で始まりタスクの内容を含む .md（「kanban - コピー.md」・OneDrive の競合コピーなど）のどれかを含むフォルダー。開発フォルダー直下と examples/ を除く）は除外します。--out がなく backupDir もわからなければ、開発フォルダー内の backups/ に出力します。');
 }
 function readJson(name, fallback) {
   const p = join(root, name);
@@ -127,9 +127,31 @@ const skipped = { junk: [], secret: [], symlink: [], dir: [], local: [], data: [
 // Data folder or backup folder inside the dev folder must never be packed.
 const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d) => d && isInside(d, root) && !samePath(d, root));
 
+// While the configuration cannot be read, a folder is taken for operations data when it holds:
+// - a task file or a backup / export of one by its name: kanban.md, Archive.md, kanban.v1-backup.md,
+//   kanban.unsaved-….md (any letter case, as on Windows);
+// - another .md whose name starts with "kanban" / "archive" AND whose content is a task file (a task
+//   header, the V2 / last-id comment, the configuration heading or its **Columns** line): copies such as "kanban - コピー.md" /
+//   "kanban (2).md" and OneDrive conflict copies ("kanban-DESKTOP-ABC123.md"). The content decides,
+//   so that a note "kanban-ideas.md" or a picture "kanban-board.jpg" keeps its folder in the backup.
+//   NULs are removed before the check: a copy saved as UTF-16 is recognised too.
 const TASK_FILE_RE = /^(kanban|archive)(\.[^\\/]*)?\.md$/i;
+const TASK_FILE_LIKE_RE = /^(kanban|archive)[^\\/]*\.md$/i;
+const TASK_CONTENT_RE = /^###[ \t]+TASK-\d+|<!--\s*(Format:\s*v2|Config:\s*Last Task ID)|^##[ \t]+⚙|^\*\*Columns\*\*\s*[:：]/m;
+function looksLikeTaskFile(path) {
+  let fd = null;
+  try {
+    fd = openSync(path, 'r');
+    const buf = Buffer.alloc(64 * 1024);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return TASK_CONTENT_RE.test(buf.subarray(0, n).toString('utf8').replace(/\0/g, ''));
+  } catch { return false; } finally { if (fd !== null) try { closeSync(fd); } catch { /* closed */ } }
+}
 function holdsTaskFiles(dir) {
-  try { return readdirSync(dir).some((n) => TASK_FILE_RE.test(n)); } catch { return false; }
+  try {
+    return readdirSync(dir, { withFileTypes: true }).some((e) => TASK_FILE_RE.test(e.name)
+      || (e.isFile() && TASK_FILE_LIKE_RE.test(e.name) && looksLikeTaskFile(join(dir, e.name))));
+  } catch { return false; }
 }
 
 function walk(dir, out) {
@@ -147,9 +169,8 @@ function walk(dir, out) {
       if (rel !== '.git' && !rel.startsWith('.git/') && SECRET_DIRS.some((r) => r.test(name))) { skipped.secret.push(rel + '/'); continue; }
       if (protectedDirs.some((d) => samePath(d, abs))) { skipped.data.push(rel + '/'); continue; }
       // The configuration could not be read, so dataDir may be unknown: a folder holding task
-      // files (also only their backups / exports: kanban.v1-backup.md, kanban.unsaved-….md; any
-      // letter case, as on Windows) is taken for operations data (the project's own dummy data is
-      // at the root and in examples/).
+      // files, their backups / exports or copies (holdsTaskFiles) is taken for operations data (the
+      // project's own dummy data is at the root and in examples/).
       if (configBroken && rel !== 'examples' && !rel.startsWith('.git/') && holdsTaskFiles(abs)) {
         skipped.data.push(rel + '/');
         console.warn(`[注意] 運用データの可能性があるため除外: ${rel}/`);
