@@ -568,4 +568,23 @@ describe('review round 7 (ops)', () => {
     }
     assert.ok(existsSync(join(ROOT, 'node_modules', 'html-minifier-terser')), 'the dev node_modules is intact');
   });
+
+  test('--check-build records no part of a temporary folder whose path has spaces (round 7: review 3)', () => {
+    const proj = projectCopy();
+    const temp = join(tmp(), 'Users', 'Taro Yamada', 'AppData Local', 'Temp'); // e.g. a Windows user folder
+    mkdirSync(temp, { recursive: true });
+    for (const extra of [[], ['--release']]) {
+      const out = tmp();
+      const r = node(proj, 'scripts/backup.mjs', ['--check-build', ...extra, '--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json'), TMPDIR: temp, TMP: temp, TEMP: temp });
+      assert.equal(r.code, 0, r.out);
+      const entries = readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip'))));
+      const m = JSON.parse(entries.find((e) => e.name === '_backup_info/manifest.json').data.toString('utf8'));
+      assert.equal(m.build.check.ok, true, m.build.check.output);
+      assert.match(m.build.check.output, /Built <一時フォルダー>[\\/]task-manager\.html /);
+      for (const t of [m.build.check.output, entries.find((e) => e.name === '_backup_info/README-RESTORE.md').data.toString('utf8')]) {
+        assert.doesNotMatch(t, /Taro|Yamada|AppData|mtm-buildcheck-/, `${extra.join(' ')}: ${t}`);
+      }
+    }
+  });
 });
+

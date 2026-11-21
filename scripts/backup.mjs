@@ -224,6 +224,12 @@ if (checkBuild && !dryRun) {
 // any remaining absolute file URL is cut down to its last part.
 function hidePaths(text, tmp) {
   let out = String(text);
+  // build.mjs prints its output RELATIVE to the project ("Built ../../Users/Taro Yamada/…/task-manager.html"):
+  // that string is not part of the absolute path, and may contain spaces. Its forms are hidden first.
+  const rel = relative(root, resolve(tmp));
+  for (const v of [...new Set([rel, rel.split(sep).join('/'), rel.split('/').join('\\')])].sort((a, b) => b.length - a.length)) {
+    if (v && v.length > 1) out = out.split(v).join('<一時フォルダー>');
+  }
   const variants = (p) => {
     const urls = [pathToFileURL(p).href];
     try { urls.push(encodeURI(decodeURI(urls[0]))); } catch { /* keep the one form */ }
