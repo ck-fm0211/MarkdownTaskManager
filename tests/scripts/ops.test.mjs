@@ -586,5 +586,22 @@ describe('review round 7 (ops)', () => {
       }
     }
   });
+
+  test('with an unreadable configuration, folders holding only backups / exports of the task files are left out too (round 7: review note)', () => {
+    const proj = projectCopy();
+    mkdirSync(join(proj, 'old-data'));
+    writeFileSync(join(proj, 'old-data', 'kanban.v1-backup.md'), '# 旧形式の退避\n');
+    mkdirSync(join(proj, 'exports'));
+    writeFileSync(join(proj, 'exports', 'kanban.unsaved-20261101-101500.md'), '# 未保存分\n');
+    mkdirSync(join(proj, 'Data'));
+    writeFileSync(join(proj, 'Data', 'Archive.md'), '# Archive\n'); // case differs (Windows)
+    writeFileSync(join(proj, 'local.config.json'), '{ "dataDir": ');
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: '' });
+    assert.equal(r.code, 0, r.out);
+    const names = readZip(join(out, readdirSync(out).find((n) => n.endsWith('.zip')))).map((e) => e.name);
+    for (const never of ['old-data/', 'exports/', 'Data/']) assert.ok(!names.some((n) => n.startsWith(never)), never);
+    for (const must of ['kanban.md', 'archive.md', 'examples/kanban.md', 'src/scripts/04-format.js']) assert.ok(names.includes(must), must);
+  });
 });
 

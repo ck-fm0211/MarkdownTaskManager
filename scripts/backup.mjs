@@ -127,6 +127,11 @@ const skipped = { junk: [], secret: [], symlink: [], dir: [], local: [], data: [
 // Data folder or backup folder inside the dev folder must never be packed.
 const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d) => d && isInside(d, root) && !samePath(d, root));
 
+const TASK_FILE_RE = /^(kanban|archive)(\.[^\\/]*)?\.md$/i;
+function holdsTaskFiles(dir) {
+  try { return readdirSync(dir).some((n) => TASK_FILE_RE.test(n)); } catch { return false; }
+}
+
 function walk(dir, out) {
   for (const name of readdirSync(dir).sort()) {
     const abs = join(dir, name);
@@ -142,9 +147,10 @@ function walk(dir, out) {
       if (rel !== '.git' && !rel.startsWith('.git/') && SECRET_DIRS.some((r) => r.test(name))) { skipped.secret.push(rel + '/'); continue; }
       if (protectedDirs.some((d) => samePath(d, abs))) { skipped.data.push(rel + '/'); continue; }
       // The configuration could not be read, so dataDir may be unknown: a folder holding task
-      // files is taken for operations data (the project's own dummy data is at the root and in
-      // examples/).
-      if (configBroken && rel !== 'examples' && !rel.startsWith('.git/') && ['kanban.md', 'archive.md'].some((f) => existsSync(join(abs, f)))) {
+      // files (also only their backups / exports: kanban.v1-backup.md, kanban.unsaved-….md; any
+      // letter case, as on Windows) is taken for operations data (the project's own dummy data is
+      // at the root and in examples/).
+      if (configBroken && rel !== 'examples' && !rel.startsWith('.git/') && holdsTaskFiles(abs)) {
         skipped.data.push(rel + '/');
         console.warn(`[注意] 運用データの可能性があるため除外: ${rel}/`);
         continue;
