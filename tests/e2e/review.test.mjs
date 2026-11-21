@@ -765,4 +765,22 @@ describe('review round 7: task form and load warnings', () => {
     assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-001 \| 新規\n[\s\S]*\*\*Subtasks\*\*:\n- \[ \] first\n(?!- \[ \] first)/);
   });
 
+  it('dropping a trailing "---" (e.g. a heading underline) is said in the save notification (round 7: review 6)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': board(task(1, 'A'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-edit-btn');
+    await page.fill('#taskDescription', '本文\n\n手順\n---');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    const md = await readFile(page, 'p', 'kanban.md');
+    assert.match(md, /\*\*Status\*\*: todo\n\n本文\n\n手順\n/);
+    assert.doesNotMatch(md, /手順\n-{3}/);
+    assert.match(await notificationText(page), /TASK-001 updated.*"---"/);
+    // Without a trailing "---" there is no such note.
+    await page.click('.task-edit-btn');
+    await page.fill('#taskDescription', '本文');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.doesNotMatch(await notificationText(page), /---/);
+  });
 });

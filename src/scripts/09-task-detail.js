@@ -305,6 +305,7 @@
             if (!inConflict && !guardWritable()) return;
 
             const v = readTaskForm();
+            const droppedRule = formDropsTrailingRule(); // read before the form is closed
             if (!v.title) { alert(t('alert.titleRequired')); return; }
             // "|" separates the fields of a metadata line: "開発 | 運用" would be read back as "開発".
             for (const [label, value] of [['taskForm.categoryLabel', v.category], ['taskForm.assignedLabel', v.assignees.join(', ')]]) {
@@ -332,6 +333,8 @@
                 candidate = newTaskFromForm(v, formatTaskId(newNumber));
                 successMessage = t('notif.taskCreated', { id: candidate.id });
             }
+            const ruleNote = droppedRule ? ' ' + t('notif.trailingRuleDropped') : '';
+            successMessage += ruleNote;
             // Last line of defence: the task must read back from Markdown exactly as entered (the
             // same check a load does). Otherwise the save would "succeed" and the next load would
             // open the whole board read-only. Nothing has been changed yet.
@@ -352,7 +355,7 @@
             renderKanban();
             if (inConflict) {
                 await autoSave(); // refused while the conflict is open: marks the board unsaved
-                showNotification(t('notif.conflictKeptInMemory'), 'error');
+                showNotification(t('notif.conflictKeptInMemory') + ruleNote, 'error');
                 renderSyncBanner();
                 return;
             }

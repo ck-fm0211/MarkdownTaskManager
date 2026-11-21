@@ -206,6 +206,16 @@
             return isTaskFormOpen() && taskFormSnapshot !== null && taskFormState() !== taskFormSnapshot;
         }
 
+        // Does the typed description / notes end with a "---" line (dropped on save, as on reading)?
+        // A heading underline ("手順\n---") is such a line too: the save notification says so.
+        function formDropsTrailingRule() {
+            return ['taskDescription', 'taskNotes'].some(id => {
+                const ls = String(document.getElementById(id).value).replace(/\r\n?/g, '\n').split('\n');
+                while (ls.length && !ls[ls.length - 1].trim()) ls.pop();
+                return ls.length > 0 && /^\s*-{3,}\s*$/.test(ls[ls.length - 1]);
+            });
+        }
+
         // Values typed in the form, as task fields (no validation).
         function readTaskForm() {
             const val = id => document.getElementById(id).value;
