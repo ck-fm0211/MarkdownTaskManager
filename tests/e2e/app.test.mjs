@@ -512,7 +512,7 @@ describe('search, priority, offline', () => {
     await page.evaluate(() => {
       window.__mockFS.createDir('q', { 'kanban.md': '' });
       window.loadRecentProjects = async () => [];
-      window.saveDirectoryHandle = async () => {};
+      window.saveDirectoryHandle = async () => true; // like the real function (the list was updated)
     });
     await openFolder(page, 'q');
     await page.click('#newTaskBtn');
@@ -522,5 +522,6 @@ describe('search, priority, offline', () => {
     assert.deepEqual(requests, []);
     assert.deepEqual(blocked, []);
     assert.match(await readFile(page, 'q', 'kanban.md'), /offline/);
+    assert.doesNotMatch(await notificationText(page), /recent-projects list/);
   });
 });
