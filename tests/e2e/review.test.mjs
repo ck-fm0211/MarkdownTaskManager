@@ -1018,6 +1018,51 @@ describe('review round 8: errors while a project is opened', () => {
     assert.equal(await syncState(page), 'error');
   });
 
+  it('opened from the recent-projects list: a failed save or a list that could not be updated is not covered by "Project … loaded" (round 8: review 低-6)', async ({ page }) => {
+    const v1 = readFileSync(new URL('../../examples/kanban.md', import.meta.url), 'utf8');
+    await createDir(page, 'q', { 'kanban.md': board(task(1, 'Q'), { lastId: 1 }), 'archive.md': archive('') });
+    await openFolder(page, 'q');
+    await createDir(page, 'p', { 'kanban.md': v1, 'archive.md': archive('') });
+    await setFault(page, 'p', 'kanban.md', { writeFail: true });
+    const listBoth = () => page.evaluate(() => { window.__projects = [{ handle: window.__mockFS.dir('q'), name: 'q', customName: '', lastAccessed: Date.now() }, { handle: window.__mockFS.dir('p'), name: 'p', customName: '', lastAccessed: Date.now() }]; return updateProjectSelector(); });
+    await listBoth();
+    await page.selectOption('#projectSelector', '1');
+    await page.waitForFunction(() => session && session.dir.name === 'p');
+    await waitIdle(page);
+    let n = await notification(page);
+    assert.match(n.text, /Project "p" loaded.*Writing kanban\.md failed/, n.text);
+    assert.match(n.cls, /\berror\b/);
+    // The list could not be updated (saveDirectoryHandle → false).
+    await setFault(page, 'p', 'kanban.md', {});
+    await openFolder(page, 'q');
+    await page.evaluate(() => { window.saveDirectoryHandle = async () => false; });
+    await listBoth();
+    await page.selectOption('#projectSelector', '1');
+    await page.waitForFunction(() => session && session.dir.name === 'p');
+    await waitIdle(page);
+    n = await notification(page);
+    assert.match(n.text, /Project "p" loaded.*recent-projects list could not be updated/, n.text);
+    assert.match(n.cls, /\berror\b/);
+  });
+
+  it('a conflict that starts while the folder is opened (V1 migration) is not covered by "Folder loaded" (round 8: review 低-6)', async ({ page }) => {
+    const v1 = readFileSync(new URL('../../examples/kanban.md', import.meta.url), 'utf8');
+    await createDir(page, 'p', { 'kanban.md': v1, 'archive.md': archive('') });
+    // The backup written before the migration is slow; meanwhile another program changes kanban.md.
+    await setFault(page, 'p', 'kanban.v1-backup.md', { writeDelay: 400 });
+    await page.evaluate(() => { window.__mockFS.nextPick = window.__mockFS.dir('p'); });
+    await page.click('#selectFolderBtn');
+    await page.waitForFunction(() => session && session.dir.name === 'p' && pendingWrites > 0);
+    await writeFile(page, 'p', 'kanban.md', v1 + '\n<!-- edited elsewhere -->\n');
+    await waitIdle(page);
+    await page.waitForFunction(() => /Folder loaded/.test(document.getElementById('notificationText').textContent));
+    const n = await notification(page);
+    assert.equal(await page.evaluate(() => session.conflict && session.conflict.kind), 'conflict');
+    assert.match(n.text, /Folder loaded successfully!.*kanban\.md was changed outside this page/, n.text);
+    assert.match(n.cls, /\berror\b/);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /edited elsewhere/, 'the other change was not overwritten');
+  });
+
   it('a recent-projects list that could not be updated is said with the "loaded" message (round 8: review 低-6)', async ({ page }) => {
     await createDir(page, 'p', { 'kanban.md': board(task(1, 'A'), { lastId: 1 }), 'archive.md': archive('') });
     await page.evaluate(() => { window.saveDirectoryHandle = async () => false; });
