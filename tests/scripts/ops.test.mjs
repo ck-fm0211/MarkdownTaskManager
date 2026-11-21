@@ -707,20 +707,24 @@ describe('review round 8 (ops)', () => {
     mkdirSync(join(proj, 'notes'));
     writeFileSync(join(proj, 'notes', 'kanban-ideas.md'), '# カンバンの改善案\n\n- 列の色\n');
     writeFileSync(join(proj, 'notes', 'archive-policy.md'), '# アーカイブの方針\n'); // lower case after "-": not a PC name
+    writeFileSync(join(proj, 'notes', 'kanban-API.md'), '# API のメモ\n'); // capitals, but not like a PC name
+    writeFileSync(join(proj, 'notes', 'archive-2025.md'), '# 2025 年の振り返り\n');
+    mkdirSync(join(proj, 'copy12'));
+    writeFileSync(join(proj, 'copy12', 'archive-2025.md'), readFileSync(join(ROOT, 'examples', 'archive.md'), 'utf8')); // a yearly archive: its content decides
     writeFileSync(join(proj, 'local.config.json'), '{ "dataDir": ');
     const out = tmp();
     const r = node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: '' });
     assert.equal(r.code, 0, r.out);
     const names = readZip(zipIn(out)).map((e) => e.name);
-    for (const d of ['copy1/', 'copy2/', 'copy3/', 'copy4/', 'copy5/', 'copy6/', 'copy7/', 'copy8/', 'copy9/', 'copy10/', 'copy11/']) assert.ok(!names.some((n) => n.startsWith(d)), d);
-    for (const must of ['notes/kanban-ideas.md', 'notes/archive-policy.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
+    for (const d of ['copy1/', 'copy2/', 'copy3/', 'copy4/', 'copy5/', 'copy6/', 'copy7/', 'copy8/', 'copy9/', 'copy10/', 'copy11/', 'copy12/']) assert.ok(!names.some((n) => n.startsWith(d)), d);
+    for (const must of ['notes/kanban-ideas.md', 'notes/archive-policy.md', 'notes/kanban-API.md', 'notes/archive-2025.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
       '.claude/skills/markdown-task-manager/SKILL.md', 'examples/kanban.md', 'kanban.md', 'archive.md']) assert.ok(names.includes(must), must);
     assert.match(r.out, /運用データの可能性があるため除外: copy1\//);
   });
 
   const kanbanWith = (extra) => `# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n${extra}`;
 
-  test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); next-id still gives an id (round 8: review 中-1)', () => {
+  test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); no new id is handed out while it is there (round 8: review 中-1)', () => {
     const dir = tmp();
     const text = kanbanWith('\nbefore\0after\n');
     writeFileSync(join(dir, 'kanban.md'), text);
