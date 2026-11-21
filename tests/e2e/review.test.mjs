@@ -882,7 +882,9 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.equal(ok, false);
     assert.equal(await readFile(page, 'p', 'kanban.md'), start(), 'nothing written');
     assert.deepEqual(await stateOf(page), { conflict: null, lastError: 'refused', blocked: null });
-    assert.match(await page.evaluate(() => document.getElementById('syncBannerDetail').textContent), /\d+: before␀after/);
+    assert.match(await page.evaluate(() => document.getElementById('syncBannerDetail').textContent), /\d+: before␀after[\s\S]*Retrying cannot save them/);
+    // The same content would be refused again: no "Retry", but the export stays available.
+    assert.deepEqual(await page.evaluate(() => ['syncRetryBtn', 'syncDownloadBtn', 'syncCopyBtn'].map((id) => document.getElementById(id).style.display)), ['none', 'inline-flex', 'inline-flex']);
     // A lone surrogate (it would be written as U+FFFD) in archive.md: refused the same way.
     const kind = await page.evaluate(async () => {
       try { await enqueueWrite(() => writeFileChecked(session, 'archive', archive0() + '\n### TASK-009 | x' + String.fromCharCode(0xD800) + '\n')); return 'written'; } catch (e) { return e.kind; }

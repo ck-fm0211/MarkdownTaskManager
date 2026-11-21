@@ -446,8 +446,11 @@
             } else if (s && s.lastError) {
                 kind = 'error';
                 text = t('sync.error.' + s.lastError.kind, { file: fileLabel(s.lastError.which) });
-                detail = [problemSummary(s.lastError.problems), isDirty(s) ? t('sync.errorUnsavedHelp') : ''].filter(Boolean).join('\n\n');
-                show = isDirty(s) ? ['retry', 'download', 'copy', 'reload'] : ['reload'];
+                // 'refused': the same content would be refused again, so no "Retry"; the help says what to do.
+                const refused = s.lastError.kind === 'refused';
+                const help = !isDirty(s) ? '' : refused ? t('sync.refusedHelp') : t('sync.errorUnsavedHelp');
+                detail = [problemSummary(s.lastError.problems), help].filter(Boolean).join('\n\n');
+                show = !isDirty(s) ? ['reload'] : refused ? ['download', 'copy', 'reload'] : ['retry', 'download', 'copy', 'reload'];
             } else if (s && s.blocked.archive) {
                 kind = 'warning';
                 text = t('sync.blockedArchive');
