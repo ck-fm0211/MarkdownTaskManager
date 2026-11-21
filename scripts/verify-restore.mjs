@@ -8,7 +8,8 @@
 // build, NOT that the lockfile installs). --skip-install alone only works if the destination
 // already has node_modules.
 // The original dev folder and the ZIP are only read.
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join, resolve, dirname, isAbsolute, normalize } from 'node:path';
 import { tmpdir, constants } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -51,19 +52,30 @@ function stopStep() {
 }
 process.on('exit', () => { stopStep(); unlinkModules(); });
 let interrupted = false;
+let interruption = null; // the running signal handler (it ends the process)
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
   try {
-    process.on(sig, async () => {
+    process.on(sig, () => {
       if (interrupted) return;
       interrupted = true;
-      const child = stopStep();
-      unlinkModules();
-      console.error(`\n[復元確認 NG] 中断されました（${sig}）`);
-      // Wait (briefly) until the stopped step has really ended, so it is not left behind.
-      if (running(child)) await Promise.race([new Promise((r) => child.once('close', r)), new Promise((r) => setTimeout(r, 3000))]);
-      process.exit(128 + ((constants.signals && constants.signals[sig]) || 0));
+      interruption = (async () => {
+        const child = stopStep();
+        unlinkModules();
+        console.error(`\n[復元確認 NG] 中断されました（${sig}）`);
+        // Wait (briefly) until the stopped step has really ended, so it is not left behind.
+        if (running(child)) await Promise.race([new Promise((r) => child.once('close', r)), new Promise((r) => setTimeout(r, 3000))]);
+        process.exit(128 + ((constants.signals && constants.signals[sig]) || 0));
+      })();
     });
   } catch { /* signal not available on this OS */ }
+}
+// A signal that arrives while this script runs synchronous code (extracting, hashing, the checks after
+// the build) is handled only when the event loop runs again. Before the next step, after the build
+// and right before "OK", the event loop gets that chance here; after a signal the script never goes
+// on (the handler above ends it with 128 + the signal number), so "OK" is never printed then.
+async function checkpoint() {
+  await new Promise((r) => setImmediate(r));
+  if (interrupted) await interruption;
 }
 if (!zipPath) fail('使い方: npm run restore:verify -- <backup.zip> [--dest <空のフォルダー>] [--keep] [--offline]');
 
@@ -134,13 +146,16 @@ if (reuse) {
   console.log('依存  : 開発フォルダーの node_modules を使用（npm ci は実行しません。ロックファイルからのインストールは未確認）');
 } else if (!args.includes('--skip-install')) {
   const ciArgs = ['ci', '--no-audit', '--no-fund', args.includes('--offline') ? '--offline' : '--prefer-offline'];
+  await checkpoint();
   console.log(`実行  : npm ${ciArgs.join(' ')}`);
   const r = await runStep(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
   if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${r.output.trim().split('\n').slice(-15).join('\n')}`);
 }
 
+await checkpoint();
 console.log('実行  : node build.mjs --out task-manager.restore-check.html');
 const b = await runStep(process.execPath, ['build.mjs', '--out', 'task-manager.restore-check.html']);
+await checkpoint();
 if (b.status !== 0) {
   fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${b.output.trim().split('\n').slice(-10).join('\n')}`);
 }
@@ -159,5 +174,9 @@ if (existsSync(join(dest, 'task-manager.html'))) {
 }
 
 unlinkModules();
-if (!keep) rmSync(dest, { recursive: true, force: true });
+// Asynchronous: removing an installed node_modules takes a while, and a signal during it must still
+// be handled (rmSync blocked the event loop, and the check ended "OK" with exit code 0). A signal
+// during the removal ends the script at once; the rest of the temporary folder may stay then.
+if (!keep) await rm(dest, { recursive: true, force: true });
+await checkpoint();
 console.log(`\n[復元確認 OK] ZIP から展開 → ${reuse ? '（開発フォルダーの依存を使って）' : '依存の再インストール → '}ビルドまで成功しました。${keep ? `\n展開先を残しています: ${dest}` : ''}`);

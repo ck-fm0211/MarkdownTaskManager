@@ -610,6 +610,46 @@ describe('review round 7 (ops)', () => {
 
 
 describe('review round 8 (ops)', () => {
+  const noEnv = { MTM_APP_DIR: '', MTM_DATA_DIR: '', MTM_BACKUP_DIR: '' };
+  const winSignals = isWin && 'Windows: child.kill() terminates the process forcibly, the signal handlers never run';
+  const zipIn = (out) => join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
+  const backupOf = (proj) => {
+    const out = tmp();
+    const r = node(proj, 'scripts/backup.mjs', ['--out', out], { ...noEnv, MTM_CONFIG: join(proj, 'none.json') });
+    assert.equal(r.code, 0, r.out);
+    return zipIn(out);
+  };
+  // restore:verify in the background → { child, output(), exited }.
+  const verifyInBackground = (proj, args, env = {}) => {
+    const child = spawn(process.execPath, ['scripts/verify-restore.mjs', ...args], { cwd: proj, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+    let output = '';
+    const listeners = [];
+    const onData = (d) => { output += d; listeners.forEach((f) => f(output)); };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    const exited = new Promise((res) => child.on('close', (code, signal) => res({ code, signal, at: Date.now() })));
+    return { child, output: () => output, onOutput: (f) => listeners.push(f), exited };
+  };
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+  test('restore:verify: a signal during the work after the build (checks, removing the temporary folder) ends it with NG, not OK (round 8: review 低-2)', { skip: winSignals, timeout: 240000 }, async () => {
+    const proj = projectCopy();
+    // Many files: removing the extracted copy takes a while, like an installed node_modules.
+    mkdirSync(join(proj, 'bulk'));
+    for (let i = 0; i < 4000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
+    const zip = backupOf(proj);
+    const temp = tmp('mtm-verify-tmp-');
+    const v = verifyInBackground(proj, [zip, '--reuse-node-modules'], { TMPDIR: temp, TMP: temp, TEMP: temp });
+    let sent = null;
+    // "ビルド: 成功" is printed after the build has ended: the script is in its checks / the removal.
+    v.onOutput((o) => { if (sent === null && /ビルド: 成功/.test(o)) sent = v.child.kill('SIGTERM'); });
+    const r = await v.exited;
+    assert.equal(sent, true, `the signal reached the running script:\n${v.output()}`);
+    assert.doesNotMatch(v.output(), /復元確認 OK/);
+    assert.match(v.output(), /中断されました（SIGTERM）/);
+    assert.equal(r.code, 143, v.output());
+  });
+
   const kanbanWith = (extra) => `# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n${extra}`;
 
   test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); next-id still gives an id (round 8: review 中-1)', () => {
