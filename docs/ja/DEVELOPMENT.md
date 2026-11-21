@@ -103,7 +103,8 @@ npm run check       # build → test
 - `scripts/backup.mjs` で設定が読めないときの運用データの判定は `holdsTaskFiles()` です（名前 `TASK_FILE_RE`、よくあるコピーの
   名前 `isTaskFileCopyName()`、または名前 `TASK_FILE_LIKE_RE` かつ中身 `TASK_CONTENT_RE`）。中身を見ずに名前だけで広げると、
   `docs/` などを除外してしまいます。
-- 新しいタスクの ID の候補は `maxIdInText()` で数えます（NUL を除いてから数えるので、NUL のある `### TASK-` 行の番号も避けます）。
+- 新しいタスクの ID の候補は `maxIdInText()` で数えます（NUL のあるファイルでは、その前に `canCreateNewTask()` / `next-id` が
+  止めます。`maxIdInText()` が NUL を除いてから数えるのは念のためです）。
 - プロジェクトを開く処理を追加する場合は、`newProjectRequest()`（03-storage.js）で要求番号を**最初の `await` より前に**取り、
   `await` のたびに古い要求でないか確認してください（後から番号を取ると、その間に始まった利用者の操作を追い越します）。
 - タスクのメタデータ行かどうかは `metaLineMask()`（04-format.js）で判定してください。解析（`parseTask`）と欠落検査

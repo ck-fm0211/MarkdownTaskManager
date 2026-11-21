@@ -197,8 +197,9 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
   part…), the app opens it **read-only**. Run `npm run tasks -- check` after editing.
 - Task ids are unique across `kanban.md` **and** `archive.md`. Get a new one with
   `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids. While a file is
-  not UTF-8 (Shift_JIS, UTF-16 with or without a BOM …) or contains a NUL character, `next-id` prints no id and exits with code 1 (its ids cannot
-  be read): save it as UTF-8 first.
+  not UTF-8 (Shift_JIS, UTF-16 with or without a BOM …) or contains a NUL character, `next-id` prints no id
+  and exits with code 1 (its ids cannot be read reliably): save a file that is not UTF-8 as UTF-8, delete a
+  NUL character (see "No NUL characters" below), then run it again.
   Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
 - Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
   `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is

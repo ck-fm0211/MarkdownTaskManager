@@ -23,7 +23,7 @@ Data protection
   NUL in valid UTF-8 is reported as `nul-char` with the line of the first one and the count (still
   read-only; the message says to delete it). App and CLI share the rule. While archive.md (CLI: either file)
   has a NUL, no new id is given (a run of NULs often replaces the end of a damaged file, where the newest ids
-  are); ids are counted with NULs removed (a NUL inside a `### TASK-` line does not hide that id). Other C0
+  are); as a further safeguard, ids are counted with NULs removed. Other C0
   control characters are not refused (they read back unchanged).
 - `restore:verify`: a signal during the checks after the build or the removal of the temporary folder was
   ignored and the check ended "OK" with exit code 0 (synchronous rmSync). The folder is removed
@@ -45,11 +45,11 @@ App
   updated is shown with the "loaded" message as an error instead of being hidden by a green one.
 
 Tests and docs
-- Regression tests for every item (unit 7, scripts 6, browser 10); all fail on `1b3c200` except three guard
+- Regression tests for every item (unit 7, scripts 7, browser 10); all fail on `1b3c200` except three guard
   tests (UTF-16 without a BOM stays "not UTF-8" in unit and CLI, other control characters are not refused);
   "no new task while archive.md has a NUL" fails there only because 1b3c200 calls that file "not UTF-8".
   The test mock's saveDirectoryHandle returns true like the real one. The round 7 signal test is skipped on
-  Windows (child.kill() terminates there). 189 tests.
+  Windows (child.kill() terminates there). 190 tests.
 - SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING, AGENTS.md, AI_WORKFLOW.md and the Claude skill
   updated (NUL vs UTF-16, reload warnings, restore:verify signals and Windows forced termination, backup
   exclusion of copies).
