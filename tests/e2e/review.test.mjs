@@ -854,6 +854,17 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.ok(dialogs.seen.some((d) => d.type === 'alert' && /columns were NOT changed[\s\S]*␀/.test(d.message)), JSON.stringify(dialogs.seen));
     assert.equal(await readFile(page, 'p', 'kanban.md'), start());
     assert.equal(await page.evaluate(() => config.columns[0].name), '📝 To Do');
+    // The id of a column (its tasks would get the new id as their **Status**).
+    const seen = dialogs.seen.length;
+    const idInput = page.locator('#columnsList input[type="text"]').nth(1);
+    await idInput.click();
+    await page.keyboard.press('End');
+    await page.keyboard.insertText('\u0000');
+    await page.keyboard.press('Tab');
+    await waitIdle(page);
+    assert.ok(dialogs.seen.slice(seen).some((d) => d.type === 'alert' && /columns were NOT changed[\s\S]*\u2400/.test(d.message)), JSON.stringify(dialogs.seen.slice(seen)));
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start());
+    assert.deepEqual(await page.evaluate(() => [config.columns[0].id, tasks[0].status]), ['todo', 'todo']);
     dialogs.queue.push('Later\u0000', 'later');
     await page.evaluate(() => addColumn());
     await waitIdle(page);
