@@ -48,6 +48,8 @@
   「NUL 以外の制御文字は拒否しない」、scripts「UTF-16BE（BOM なし）は引き続き UTF-8 でない」（NUL の扱いを変えても UTF-16 の
   判定と正しいファイルを崩さないことの確認）。テスト用のモックの `saveDirectoryHandle` は本物と同じく `true` を返すように直しました
   （修正前は値を返さず、`openFolder()` のたびに一覧の更新失敗の通知が出ていました）。
+- 日本語入力（IME）の変換を確定する Enter が、サブタスク欄でサブタスクを追加しないこと（`isComposing` / `keyCode 229` で判定）は、
+  実機の IME では未確認です（自動テストは IME を使えないため）。
 - 実機で確認できないこと（第 8 回）: Windows での `restore:verify` の中断（`taskkill /T /F`・SIGBREAK / SIGHUP・ジャンクション）、
   強制終了で残ったジャンクションの削除、SIGKILL でも終わらない処理の PID 表示（POSIX では起こせないため自動テストなし）。
   Windows の強制終了（タスクマネージャーの「タスクの終了」、`taskkill /F`、Node の `child.kill()`）ではスクリプトが後片付けを

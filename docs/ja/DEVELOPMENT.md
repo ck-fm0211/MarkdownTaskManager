@@ -84,7 +84,7 @@ npm run check       # build → test
   読み取り専用（`session.blocked`）・競合中のファイルへの書き込みを拒否します。待ち行列に入れた処理は、実行を始める
   時点で前提（読み取り専用でない・競合がない）をもう一度確認してください（10-archive.js の `refusedAtStart()`）。
 - ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外と、
-  BOM のない UTF-16（1 バイトおきの NUL。`utf16WithoutBom`）を検出）。正しい UTF-8 の中の NUL 文字は `decodeUtf8` ではなく
+  BOM のない UTF-16（1 バイトおきの NUL、または UTF-16 の改行。`utf16WithoutBom`）を検出）。正しい UTF-8 の中の NUL 文字は `decodeUtf8` ではなく
   解析（`parseKanbanContent` / `parseArchiveContent` の `nulCharProblems` → `nul-char`、行番号つき）が報告します。UTF-8 で
   ないファイルの NUL は `not-utf8` に含めます（`04-io.js` の `loadProblems`、`scripts/tasks.mjs` も同じ規則）。
 - ファイルに文字列を書く入力を追加するときは、変更する前に読み戻しを確認してください: タスクは `taskWriteProblems()`

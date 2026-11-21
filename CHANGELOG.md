@@ -18,7 +18,8 @@ Data protection
   Every input that writes text refuses a NUL and an unpaired surrogate (written as U+FFFD) before anything is
   changed (taskWriteProblems for all form fields and the detail view's subtasks, configWriteProblems for
   columns); writeFileChecked() refuses such content without writing ('refused', last line of defence).
-- NUL detection split: UTF-16 without a BOM is recognised by NULs at one byte parity and stays "not UTF-8"; a
+- NUL detection split: UTF-16 without a BOM is recognised by NULs at one byte parity or by its line breaks
+  ("\n\0" / "\0\n", e.g. a file of mostly kana and full-width spaces) and stays "not UTF-8"; a
   NUL in valid UTF-8 is reported as `nul-char` with the line of the first one and the count (still
   read-only; the message says to delete it). App and CLI share the rule; `next-id` gives an id for such a
   file; ids are counted with NULs removed (a NUL inside a `### TASK-` line no longer hides that id). Other C0
