@@ -636,7 +636,7 @@ describe('review round 8 (ops)', () => {
     const proj = projectCopy();
     // Many files: removing the extracted copy takes a while, like an installed node_modules.
     mkdirSync(join(proj, 'bulk'));
-    for (let i = 0; i < 10000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
+    for (let i = 0; i < 20000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
     const zip = backupOf(proj);
     const temp = tmp('mtm-verify-tmp-');
     const v = verifyInBackground(proj, [zip, '--reuse-node-modules'], { TMPDIR: temp, TMP: temp, TEMP: temp });
