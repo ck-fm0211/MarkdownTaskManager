@@ -131,7 +131,23 @@ console.log(`検証  : manifest の ${manifest.files.length} ファイルの SHA
 const isWin = process.platform === 'win32';
 // npm is npm.cmd on Windows and needs a shell; Node itself must NOT go through a shell
 // (C:\Program Files\nodejs\node.exe contains a space and would be split).
-// → { status, output } (stdout + stderr).
+// → { status, output }: output = the END of stdout + stderr (at most OUTPUT_TAIL characters; only
+// the last lines are shown on failure). The streams are decoded as UTF-8 text (setEncoding: a
+// character split between two chunks stays one character, no U+FFFD), and an endless or huge output
+// cannot fill the memory (spawnSync used to cut it at 1 MB; the asynchronous step had no limit).
+const OUTPUT_TAIL = 64 * 1024;
+function tailOf(text) {
+  let t = text.length > OUTPUT_TAIL ? text.slice(-OUTPUT_TAIL) : text;
+  if (/^[\uDC00-\uDFFF]/.test(t)) t = t.slice(1); // never start with half of a surrogate pair
+  return t;
+}
+// The end of a step's output for a failure message: the last `n` lines, at most 4000 characters
+// (the end is kept). The message is written right before process.exit(): a long one could be cut
+// off on a pipe.
+function lastLines(text, n) {
+  const t = text.trim().split('\n').slice(-n).join('\n');
+  return t.length > 4000 ? `…${tailOf(t.slice(-4000))}` : t;
+}
 function runStep(cmd, a, viaShell = false) {
   return new Promise((res) => {
     let output = '';
@@ -140,12 +156,15 @@ function runStep(cmd, a, viaShell = false) {
       child = spawn(cmd, a, { cwd: dest, shell: viaShell, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MTM_CONFIG: join(dest, '__no_config__.json') } });
     } catch (e) { res({ status: null, output: e.message }); return; }
     currentStep = child;
-    child.stdout.on('data', (d) => { output += d; });
-    child.stderr.on('data', (d) => { output += d; });
-    child.on('error', (e) => { if (currentStep === child) currentStep = null; if (!interrupted) res({ status: null, output: output + e.message }); });
+    const collect = (d) => { output += d; if (output.length > 2 * OUTPUT_TAIL) output = tailOf(output); };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', (e) => { if (currentStep === child) currentStep = null; if (!interrupted) res({ status: null, output: tailOf(output + e.message) }); });
     child.on('close', (code) => {
       if (currentStep === child) currentStep = null;
-      if (!interrupted) res({ status: code, output }); // interrupted: the signal handler ends the process
+      if (!interrupted) res({ status: code, output: tailOf(output) }); // interrupted: the signal handler ends the process
     });
   });
 }
@@ -165,7 +184,7 @@ if (reuse) {
   await checkpoint();
   console.log(`実行  : npm ${ciArgs.join(' ')}`);
   const r = await runStep(isWin ? 'npm.cmd' : 'npm', ciArgs, isWin);
-  if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${r.output.trim().split('\n').slice(-15).join('\n')}`);
+  if (r.status !== 0) fail(`npm ci に失敗しました（ネットワーク / npm キャッシュを確認）:\n${lastLines(r.output, 15)}`);
 }
 
 await checkpoint();
@@ -173,7 +192,7 @@ console.log('実行  : node build.mjs --out task-manager.restore-check.html');
 const b = await runStep(process.execPath, ['build.mjs', '--out', 'task-manager.restore-check.html']);
 await checkpoint();
 if (b.status !== 0) {
-  fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${b.output.trim().split('\n').slice(-10).join('\n')}`);
+  fail(`ビルドに失敗しました（バックアップ時点で作業途中だった可能性: ビルド確認=${manifest.build && manifest.build.check && manifest.build.check.run ? (manifest.build.check.ok ? '成功' : '失敗') : '未実施'}）:\n${lastLines(b.output, 10)}`);
 }
 const builtPath = join(dest, 'task-manager.restore-check.html');
 if (!existsSync(builtPath)) fail('ビルドは終了しましたが、出力ファイル（task-manager.restore-check.html）がありません（build.mjs が作業途中の可能性）');

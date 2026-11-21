@@ -674,6 +674,21 @@ describe('review round 8 (ops)', () => {
     }
   });
 
+  test('restore:verify: the output of a step is decoded as UTF-8 text and only its end is kept (round 8: review 低-4)', { timeout: 120000 }, () => {
+    const proj = projectCopy();
+    // A failing build with a lot of Japanese output: 20 lines of 90 KB each, split into pipe chunks
+    // at places that are not character boundaries.
+    writeFileSync(join(proj, 'build.mjs'), "const line = 'あ'.repeat(30000);\nfor (let i = 0; i < 20; i++) process.stdout.write(`${i}:${line}\\n`);\nprocess.stdout.write('最後の行: ビルド失敗（テスト）\\n');\nprocess.exitCode = 1;\n");
+    const zip = backupOf(proj);
+    const r = node(proj, 'scripts/verify-restore.mjs', [zip, '--reuse-node-modules']);
+    assert.equal(r.code, 1, r.out.slice(-2000));
+    assert.match(r.out, /ビルドに失敗しました/);
+    assert.ok(!r.out.includes('\uFFFD'), 'no character was split into U+FFFD');
+    // The failure message shows the end only (written right before exit, a long one was cut off).
+    assert.ok(r.out.length < 8000, `only the end of the output is shown (${r.out.length} characters printed)`);
+    assert.match(r.out, /最後の行: ビルド失敗（テスト）/);
+  });
+
   const kanbanWith = (extra) => `# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n${extra}`;
 
   test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); next-id still gives an id (round 8: review 中-1)', () => {
