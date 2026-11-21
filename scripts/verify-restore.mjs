@@ -77,7 +77,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
         if (child && !(await endedWithin(child, STOP_GRACE_MS))) {
           stopStep(true);
           if (!(await endedWithin(child, 2000))) {
-            console.error(`[注意] 実行中だった処理（PID ${child.pid}）が終了しません。タスクマネージャー（Windows）や kill -9 ${child.pid} で終了させてください。`);
+            console.error(`[注意] 実行中だった処理（PID ${child.pid}）が終了しません（強制終了も効きません）。タスクマネージャー（Windows）や ps（POSIX）でその処理の状態を確認し、終了できなければ PC を再起動してください。`);
           }
         }
         process.exit(128 + ((constants.signals && constants.signals[sig]) || 0));
