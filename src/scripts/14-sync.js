@@ -25,7 +25,7 @@
         class SyncError extends Error {
             constructor(kind, which, message, extra = {}) {
                 super(message || kind);
-                this.kind = kind;   // conflict | missing | appeared | read-failed | write-failed | verify-failed | uncertain | stale | blocked
+                this.kind = kind;   // conflict | missing | appeared | read-failed | write-failed | verify-failed | uncertain | stale | blocked | refused
                 this.which = which; // 'kanban' | 'archive'
                 Object.assign(this, extra);
             }
@@ -129,9 +129,15 @@
         // A read-only file (parse problems, not UTF-8) and an open conflict are refused HERE too, not
         // only by the callers: a job that was queued before a reload made the file read-only must
         // not write it when its turn comes.
+        // Content that would not read back as written (a NUL: the file would open read-only; a lone
+        // surrogate: written as U+FFFD) is refused before anything is read or written ('refused').
+        // The inputs check this themselves (taskWriteProblems / configWriteProblems); this is the
+        // last line of defence.
         async function writeFileChecked(s, which, content) {
             const slot = s.files[which];
             assertLive(s);
+            const unwritable = unwritableTextProblems(content, { lineNumbers: true });
+            if (unwritable.length) throw new SyncError('refused', which, 'content would not read back', { problems: unwritable });
             if (s.blocked[which]) throw new SyncError('blocked', which, 'file is read-only');
             if (s.conflict) throw new SyncError(s.conflict.kind, s.conflict.which, 'conflict is open');
             const disk = await assertUnchanged(s, which);
@@ -230,7 +236,7 @@
             if (['conflict', 'missing', 'appeared', 'uncertain'].includes(e.kind)) {
                 s.conflict = { which: e.which || 'kanban', kind: e.kind };
             } else {
-                s.lastError = { which: e.which || 'kanban', kind: e.kind };
+                s.lastError = { which: e.which || 'kanban', kind: e.kind, problems: e.problems || null };
             }
             renderSyncBanner();
             showNotification(t('sync.saveFailedShort', { file: fileLabel(e.which) }), 'error');
@@ -404,7 +410,7 @@
 
         function problemSummary(problems) {
             return (problems || []).map(p => {
-                const head = t('integrity.' + p.code, { id: p.id || '', section: p.section || '', where: p.section ? ` (${p.section})` : '' });
+                const head = t('integrity.' + p.code, { id: p.id || '', section: p.section || '', where: p.section ? ` (${p.section})` : '', line: p.line || '', count: p.count || '' });
                 const lines = (p.lines || []).slice(0, 5).map(l => `  ${l}`).join('\n');
                 return lines ? `${head}\n${lines}` : head;
             }).join('\n');
@@ -437,7 +443,7 @@
             } else if (s && s.lastError) {
                 kind = 'error';
                 text = t('sync.error.' + s.lastError.kind, { file: fileLabel(s.lastError.which) });
-                detail = isDirty(s) ? t('sync.errorUnsavedHelp') : '';
+                detail = [problemSummary(s.lastError.problems), isDirty(s) ? t('sync.errorUnsavedHelp') : ''].filter(Boolean).join('\n\n');
                 show = isDirty(s) ? ['retry', 'download', 'copy', 'reload'] : ['reload'];
             } else if (s && s.blocked.archive) {
                 kind = 'warning';

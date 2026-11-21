@@ -605,3 +605,36 @@ describe('review round 7 (ops)', () => {
   });
 });
 
+
+describe('review round 8 (ops)', () => {
+  const kanbanWith = (extra) => `# B\n<!-- Config: Last Task ID: 3 -->\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n### TASK-003 | c\n**Status**: todo\n${extra}`;
+
+  test('tasks check: a NUL in UTF-8 text is reported with its line (not "not UTF-8"); next-id still gives an id (round 8: review 中-1)', () => {
+    const dir = tmp();
+    const text = kanbanWith('\nbefore\0after\n');
+    writeFileSync(join(dir, 'kanban.md'), text);
+    const line = text.split('\n').findIndex((l) => l.includes('\0')) + 1;
+    const c = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(c.code, 1, c.out);
+    assert.match(c.out, new RegExp(`kanban\\.md: NUL 文字.*${line} 行目にあります（全 1 個）`));
+    assert.match(c.out, new RegExp(`${line}: before␀after`));
+    assert.doesNotMatch(c.out, /UTF-8 ではありません/);
+    assert.match(c.out, /\[NG\]/);
+    assert.match(c.out, /次の ID: TASK-004/);
+    const n = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
+    assert.equal(n.code, 0, n.out);
+    assert.match(n.out, /TASK-004/);
+  });
+
+  test('guard: tasks check / next-id: UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'kanban.md'), Buffer.from(kanbanWith(''), 'utf16le').swap16());
+    const c = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(c.code, 1, c.out);
+    assert.match(c.out, /kanban\.md: UTF-8 ではありません/);
+    assert.doesNotMatch(c.out, /NUL 文字（U\+0000/, 'its NULs are part of "not UTF-8"');
+    const n = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
+    assert.equal(n.code, 1, n.out);
+    assert.doesNotMatch(n.out, /TASK-00\d/);
+  });
+});

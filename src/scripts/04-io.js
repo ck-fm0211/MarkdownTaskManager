@@ -51,6 +51,11 @@
         }
 
         const NOT_UTF8 = (name) => ({ code: 'not-utf8', lines: [name] });
+        // Problems of a file as loaded: a file that is not UTF-8 is reported as such (the NULs of a
+        // UTF-16 file are part of that, not a separate 'nul-char' problem).
+        const loadProblems = (name, notUtf8, problems) => notUtf8
+            ? [NOT_UTF8(name)].concat(problems.filter(p => p.code !== 'nul-char'))
+            : problems;
 
         // Load warnings (duplicate ids, unknown status, dates that are not YYYY-MM-DD …) as one text.
         function loadWarningsText(warnings) {
@@ -73,7 +78,7 @@
             loadedArchiveV2 = r.formatV2;
             s.archivePreamble = r.preamble;
             s.files.archive.notUtf8 = !!notUtf8;
-            const problems = (notUtf8 ? [NOT_UTF8('archive.md')] : []).concat(r.problems);
+            const problems = loadProblems('archive.md', notUtf8, r.problems);
             s.blocked.archive = problems.length ? problems : null;
             return r;
         }
@@ -150,7 +155,7 @@
                 config = r.config;
                 tasks = r.tasks;
                 loadedFormatV2 = r.formatV2;
-                const problems = (kanban.notUtf8 ? [NOT_UTF8('kanban.md')] : []).concat(r.problems);
+                const problems = loadProblems('kanban.md', kanban.notUtf8, r.problems);
                 s.blocked.kanban = problems.length ? problems : null;
                 s.warnings = r.warnings;
                 console.log(`Loaded kanban.md: ${tasks.length} tasks, V2=${loadedFormatV2}, problems=${r.problems.length}`);

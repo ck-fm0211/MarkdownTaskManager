@@ -332,3 +332,57 @@ describe('YYYY-MM-DD years below 100 (round 7: review 7)', () => {
     assert.deepEqual(w && w.lines, ['TASK-002 Due: 0000-01-01']);
   });
 });
+
+// ----- Round 8: review of c966c91..1b3c200 -----
+
+describe('a NUL in UTF-8 text is not "not UTF-8"; UTF-16 without a BOM still is (round 8: review 中-1)', () => {
+  const board = v2Board('### TASK-001 | t\n**Status**: todo\n\nbefore\0after\n');
+  test('valid UTF-8 with a NUL decodes as UTF-8 and is reported as nul-char with its line', () => {
+    const d = F.decodeUtf8(new TextEncoder().encode(board));
+    assert.equal(d.valid, true);
+    const p = plain(F.parseKanbanContent(d.text).problems);
+    const lineNo = board.split('\n').findIndex((l) => l.includes('\0')) + 1;
+    assert.deepEqual(p.map((x) => x.code), ['nul-char']);
+    assert.equal(p[0].line, lineNo);
+    assert.equal(p[0].count, 1);
+    assert.deepEqual(p[0].lines, [`${lineNo}: before␀after`]);
+    const a = plain(F.parseArchiveContent('# Task Archive\n<!-- Format: v2 -->\n\n### TASK-002 | x\0y\n**Status**: done\n').problems);
+    assert.deepEqual(a.map((x) => [x.code, x.line]), [['nul-char', 4]]);
+  });
+  test('a run of NULs (e.g. the damaged end of a file) is nul-char too, not UTF-16', () => {
+    const text = board + '\0'.repeat(300);
+    assert.equal(F.decodeUtf8(new TextEncoder().encode(text)).valid, true);
+    assert.equal(plain(F.parseKanbanContent(text).problems).find((x) => x.code === 'nul-char').count, 301);
+  });
+  test('guard: UTF-16LE / UTF-16BE without a BOM stay "not UTF-8", also with CJK characters that happen to decode', () => {
+    for (const s of ['# Task Archive\n### TASK-004 | d\n**Status**: done\n', '# Archive\n### TASK-004 | あい\n**Status**: done\n']) {
+      const le = Buffer.from(s, 'utf16le');
+      assert.equal(F.decodeUtf8(le).valid, false, 'LE');
+      assert.equal(F.decodeUtf8(Buffer.from(le).swap16()).valid, false, 'BE');
+    }
+  });
+});
+
+describe('the form check refuses characters that would not read back (round 8: review 中-1)', () => {
+  const base = { id: 'TASK-001', title: 'A', status: 'todo', priority: '', category: '', assignees: [], tags: [], created: '', started: '', due: '', completed: '', description: '', notes: '', subtasks: [], extra: '' };
+  const cols = [{ name: 'To Do', id: 'todo' }];
+  const variants = (bad) => [
+    { title: `A${bad}B` }, { category: `x${bad}y` }, { assignees: [`@a${bad}`] }, { tags: [`#t${bad}`] }, { due: `2026${bad}` },
+    { description: `before${bad}after` }, { notes: `n${bad}` }, { subtasks: [{ completed: false, text: `s${bad}` }] },
+  ];
+  test('a NUL in any field is refused (unwritable-char), shown as ␀', () => {
+    for (const v of variants('\0')) {
+      const p = plain(F.taskWriteProblems({ ...base, ...v }, cols));
+      assert.deepEqual(p.map((x) => x.code), ['unwritable-char'], JSON.stringify(v));
+      assert.match(p[0].lines.join('\n'), /␀/);
+    }
+  });
+  test('an unpaired surrogate (written as U+FFFD) is refused too', () => {
+    for (const v of variants('\uD800')) assert.deepEqual(plain(F.taskWriteProblems({ ...base, ...v }, cols)).map((x) => x.code), ['unwritable-char'], JSON.stringify(v));
+    assert.deepEqual(plain(F.taskWriteProblems({ ...base, description: '絵文字 😀 は可' }, cols)), [], 'a surrogate PAIR is fine');
+  });
+  test('guard: other control characters that read back (tab, ESC) are not refused and do not make a file read-only', () => {
+    assert.deepEqual(plain(F.taskWriteProblems({ ...base, description: 'a\tb \u001b[0m c' }, cols)), []);
+    assert.deepEqual(plain(F.parseKanbanContent(v2Board('### TASK-001 | t\n**Status**: todo\n\na\tb \u001b[0m c\n')).problems), []);
+  });
+});

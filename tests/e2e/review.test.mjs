@@ -784,3 +784,120 @@ describe('review round 7: task form and load warnings', () => {
     assert.doesNotMatch(await notificationText(page), /---/);
   });
 });
+
+describe('review round 8: characters that cannot be written (NUL)', () => {
+  const start = () => board(task(1, 'A', '**Priority**: Medium\n\n**Subtasks**:\n- [ ] one'), { lastId: 1 });
+  const typeInto = async (page, selector, text) => { await page.focus(selector); await page.keyboard.insertText(text); };
+  const stateOf = (page) => page.evaluate(() => ({ conflict: session.conflict, lastError: session.lastError && session.lastError.kind, blocked: session.blocked.kanban }));
+
+  it('a NUL typed into any field of the task form is refused before anything is written (round 8: review 中-1)', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': start(), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    for (const field of ['#taskTitle', '#taskCategory', '#taskAssignee', '#taskTags', '#taskDescription', '#taskNotes', '#formSubtaskInput']) {
+      await page.click('.task-edit-btn');
+      await typeInto(page, field, 'before\u0000after');
+      const seen = dialogs.seen.length;
+      await page.click('#taskFormSubmitBtn');
+      await waitIdle(page);
+      const alerts = dialogs.seen.slice(seen).filter((d) => d.type === 'alert');
+      assert.equal(alerts.length, 1, `${field}: one alert`);
+      assert.match(alerts[0].message, /NOT saved[\s\S]*NUL[\s\S]*before␀after/, field);
+      assert.equal(await readFile(page, 'p', 'kanban.md'), start(), `${field}: kanban.md unchanged`);
+      assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), true, `${field}: the form stays open`);
+      assert.deepEqual(await stateOf(page), { conflict: null, lastError: null, blocked: null }, field);
+      assert.equal(await syncState(page), 'saved', field);
+      await page.evaluate(() => closeTaskModal());
+    }
+    // A new task: refused too, and no id is used up.
+    await page.click('#newTaskBtn');
+    await page.fill('#taskTitle', 'New');
+    await typeInto(page, '#taskDescription', 'x\u0000y');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start());
+    assert.deepEqual(await page.evaluate(() => [tasks.length, config.lastTaskId]), [1, 1]);
+    // Reloading finds a writable board (it was not damaged).
+    await page.evaluate(() => { closeTaskModal(); return reloadFromDisk({ force: true }); });
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => session.blocked.kanban), null);
+  });
+
+  it('a NUL in a subtask added in the detail view is refused: no write, no conflict (round 8: review 中-1)', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': start(), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('.task-card');
+    await typeInto(page, '#newSubtaskInput', 'x\u0000y');
+    await page.press('#newSubtaskInput', 'Enter');
+    await waitIdle(page);
+    assert.ok(dialogs.seen.some((d) => d.type === 'alert' && /NUL[\s\S]*x␀y/.test(d.message)), JSON.stringify(dialogs.seen));
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start());
+    assert.deepEqual(await page.evaluate(() => tasks[0].subtasks.map((s) => s.text)), ['one']);
+    assert.deepEqual(await stateOf(page), { conflict: null, lastError: null, blocked: null });
+    // Editing a subtask (prompt) is checked the same way.
+    dialogs.queue.push('o\u0000ne');
+    await page.evaluate(() => editSubtask('TASK-001', 0));
+    await waitIdle(page);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start());
+    assert.deepEqual(await page.evaluate(() => tasks[0].subtasks.map((s) => s.text)), ['one']);
+  });
+
+  it('a NUL in a column name or id is refused (round 8: review 中-1)', async ({ page, dialogs }) => {
+    await createDir(page, 'p', { 'kanban.md': start(), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('#manageColsBtn');
+    const nameInput = page.locator('#columnsList input[type="text"]').first();
+    await nameInput.click();
+    await page.keyboard.press('End');
+    await page.keyboard.insertText('\u0000x');
+    await page.keyboard.press('Tab'); // change event → updateColumn
+    await waitIdle(page);
+    assert.ok(dialogs.seen.some((d) => d.type === 'alert' && /columns were NOT changed[\s\S]*␀/.test(d.message)), JSON.stringify(dialogs.seen));
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start());
+    assert.equal(await page.evaluate(() => config.columns[0].name), '📝 To Do');
+    dialogs.queue.push('Later\u0000', 'later');
+    await page.evaluate(() => addColumn());
+    await waitIdle(page);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start());
+    assert.equal(await page.evaluate(() => config.columns.length), 3);
+    assert.deepEqual(await stateOf(page), { conflict: null, lastError: null, blocked: null });
+  });
+
+  it('last line of defence: writeFileChecked refuses content that would not read back, before writing (round 8: review 中-1)', async ({ page }) => {
+    await createDir(page, 'p', { 'kanban.md': start(), 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    // A NUL that reached the board without an input check.
+    const ok = await page.evaluate(() => { tasks[0].description = 'before\u0000after'; return persistKanban('saved'); });
+    await waitIdle(page);
+    assert.equal(ok, false);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start(), 'nothing written');
+    assert.deepEqual(await stateOf(page), { conflict: null, lastError: 'refused', blocked: null });
+    assert.match(await page.evaluate(() => document.getElementById('syncBannerDetail').textContent), /\d+: before␀after/);
+    // A lone surrogate (it would be written as U+FFFD) in archive.md: refused the same way.
+    const kind = await page.evaluate(async () => {
+      try { await enqueueWrite(() => writeFileChecked(session, 'archive', archive0() + '\n### TASK-009 | x' + String.fromCharCode(0xD800) + '\n')); return 'written'; } catch (e) { return e.kind; }
+      function archive0() { return session.files.archive.baseline; }
+    });
+    assert.equal(kind, 'refused');
+    assert.equal(await readFile(page, 'p', 'archive.md'), archive(''));
+  });
+
+  it('a NUL in valid UTF-8 opens read-only as "nul-char" with its line; UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', async ({ page }) => {
+    const text = board(task(1, 'A', '\nbefore\u0000after'), { lastId: 1 });
+    const lineNo = text.split('\n').findIndex((l) => l.includes('\u0000')) + 1;
+    await createDir(page, 'p', { 'kanban.md': text, 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    assert.deepEqual(await page.evaluate(() => session.blocked.kanban.map((p) => [p.code, p.line])), [['nul-char', lineNo]]);
+    const banner = await page.evaluate(() => document.getElementById('syncBannerDetail').textContent);
+    assert.match(banner, new RegExp(`NUL[\\s\\S]*line ${lineNo}[\\s\\S]*${lineNo}: before␀after`));
+    assert.doesNotMatch(banner, /not UTF-8/);
+    // Guard: UTF-16BE without a BOM (ASCII only, valid UTF-8 byte by byte) stays "not UTF-8".
+    const be = [];
+    for (const ch of board(task(1, 'A'), { lastId: 1 })) { const c = ch.charCodeAt(0); if (c < 0x80) be.push(0, c); }
+    await createDir(page, 'q', {});
+    await writeBytes(page, 'q', 'kanban.md', be);
+    await openFolder(page, 'q');
+    const codes = await page.evaluate(() => session.blocked.kanban.map((p) => p.code));
+    assert.equal(codes[0], 'not-utf8', codes.join());
+    assert.ok(!codes.includes('nul-char'), 'its NULs are part of "not UTF-8"');
+  });
+});

@@ -34,15 +34,30 @@ const read = (p, label) => {
 };
 const kanbanText = read(kanbanPath, 'kanban.md');
 const archiveText = read(archivePath, 'archive.md');
-const k = kanbanText !== null ? F.parseKanbanContent(kanbanText) : null;
-const a = archiveText !== null ? F.parseArchiveContent(archiveText) : null;
+// Same rule as the browser (04-io.js loadProblems): the NULs of a file that is not UTF-8 (UTF-16)
+// are part of "not UTF-8"; a NUL in UTF-8 text is its own problem ('nul-char', with its line).
+const parsed = (text, label, parse) => {
+  if (text === null) return null;
+  const r = parse(text);
+  if (notUtf8.includes(label)) r.problems = r.problems.filter((p) => p.code !== 'nul-char');
+  return r;
+};
+const k = parsed(kanbanText, 'kanban.md', F.parseKanbanContent);
+const a = parsed(archiveText, 'archive.md', F.parseArchiveContent);
 const active = k ? k.tasks : [];
 const archived = a ? a.tasks : [];
 
 function printProblems(label, list) {
   for (const p of list) {
+    if (p.code === 'nul-char') {
+      // Valid UTF-8 with a NUL (U+0000): saving again as UTF-8 does not remove it — say where it is.
+      console.log(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
+      (p.lines || []).forEach((l) => console.log(`      ${l}`));
+      continue;
+    }
     console.log(`  ✗ ${label}: ${p.code}${p.id ? ' ' + p.id : ''}${p.section ? ' [' + p.section + ']' : ''}`);
-    (p.lines || []).slice(0, 8).forEach((l) => console.log(`      ${l}`));
+    // NULs (e.g. of a UTF-16 file read as UTF-8) are shown as "␀", not written to the terminal.
+    (p.lines || []).slice(0, 8).forEach((l) => console.log(`      ${String(l).replace(/\0/g, '\u2400')}`));
   }
 }
 
@@ -78,7 +93,7 @@ if (cmd === 'where') {
   let bad = 0;
   let toFix = 0;
   console.log(`dataDir: ${dir}`);
-  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS・UTF-16 など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
+  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS・BOM のない UTF-16 など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
   if (!k) { console.log('  kanban.md がありません'); bad++; } else {
     console.log(`kanban.md : ${active.length} タスク（V2=${k.formatV2}）`);
     printProblems('kanban.md', k.problems); bad += k.problems.length;
@@ -102,7 +117,7 @@ if (cmd === 'where') {
   const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
   if (notUtf8.length) console.log('次の ID: （UTF-8 でないファイルがあるため決められません）');
   else console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived))}`);
-  if (bad) console.log(`\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます（保存すると失われる・化ける内容があるため）。`);
+  if (bad) console.log(`\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます（保存すると失われる・化ける内容や NUL 文字があるため）。`);
   if (toFix) console.log(`${bad ? '' : '\n'}[NG] 重複した ID が ${toFix} 件あります。ブラウザーは警告を表示して通常どおり開きますが、ドラッグ移動などが別のタスクに作用するおそれがあるため、片方を修正してください。`);
   if (!bad && !toFix) console.log('\n[OK] ブラウザーで安全に読み書きできる形式です。');
   process.exit(bad || toFix ? 1 : 0);

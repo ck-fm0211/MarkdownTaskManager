@@ -260,6 +260,16 @@
             }
         }
 
+        // The detail view writes subtask text too: the same read-back check as the task form (a NUL,
+        // a line separator … would be saved "successfully" and make the board read-only on the next
+        // load). → true (and an alert) when the change must not be made; nothing has been changed.
+        function subtasksWriteRefused(task, subtasks) {
+            const problems = taskWriteProblems({ ...task, subtasks }, config.columns);
+            if (!problems.length) return false;
+            alert(t('alert.cannotWriteTask', { details: problemSummary(problems) }));
+            return true;
+        }
+
         function addSubtask(taskId) {
             const input = document.getElementById('newSubtaskInput');
             const text = input.value.trim();
@@ -268,6 +278,7 @@
             const task = findActiveTask(taskId);
             if (task && guardWritable()) {
                 if (/\n/.test(text)) return;
+                if (subtasksWriteRefused(task, task.subtasks.concat([{ completed: false, text }]))) return;
                 task.subtasks.push({ completed: false, text });
                 currentDetailTask = task;
                 input.value = '';
@@ -284,7 +295,9 @@
 
             const newText = prompt(t('prompt.editSubtask'), task.subtasks[subtaskIdx].text);
             if (newText !== null && newText.trim()) {
-                task.subtasks[subtaskIdx].text = newText.trim().replace(/\s*\n\s*/g, ' ');
+                const text = newText.trim().replace(/\s*\n\s*/g, ' ');
+                if (subtasksWriteRefused(task, task.subtasks.map((st, i) => (i === subtaskIdx ? { ...st, text } : st)))) return;
+                task.subtasks[subtaskIdx].text = text;
                 currentDetailTask = task;
                 showTaskDetail(task);
                 renderKanban();

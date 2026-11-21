@@ -29,6 +29,15 @@
             return !config.columns.some((c, i) => i !== exceptIdx && c.id === v);
         }
 
+        // The columns as they would be written must read back the same (no NUL, no line separator …):
+        // checked before the configuration is changed. → true (and an alert) when refused.
+        function columnsWriteRefused(columns) {
+            const problems = configWriteProblems({ ...config, columns });
+            if (!problems.length) return false;
+            alert(t('alert.cannotWriteColumns', { details: problemSummary(problems) }));
+            return true;
+        }
+
         function addColumn() {
             if (!guardWritable()) return;
             const name = prompt(t('prompt.columnName'));
@@ -36,6 +45,7 @@
             const id = prompt(t('prompt.columnId'));
             if (id === null) return;
             if (!validColumnId(id)) { alert(t('alert.invalidColumnId')); return; }
+            if (columnsWriteRefused(config.columns.concat([{ name: name.trim(), id: id.trim() }]))) return;
             config.columns.push({ name: name.trim(), id: id.trim() });
             openColumnsModal();
             renderKanban();
@@ -49,11 +59,13 @@
             const v = String(value || '').trim();
             if (field === 'id') {
                 if (!validColumnId(v, idx)) { alert(t('alert.invalidColumnId')); openColumnsModal(); return; }
+                if (columnsWriteRefused(config.columns.map((c, i) => (i === idx ? { ...c, id: v } : c)))) { openColumnsModal(); return; }
                 const oldId = col.id;
                 tasks.forEach(task => { if (task.status === oldId) task.status = v; });
                 col.id = v;
             } else {
                 if (!v || /[|\r\n]/.test(v)) { openColumnsModal(); return; }
+                if (columnsWriteRefused(config.columns.map((c, i) => (i === idx ? { ...c, name: v } : c)))) { openColumnsModal(); return; }
                 col.name = v;
             }
             renderKanban();

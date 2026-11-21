@@ -67,16 +67,100 @@
         // turn the bytes of a Shift_JIS (cp932) / UTF-16 file into U+FFFD, and a later save would
         // write the garbled text back. → { text, valid }: valid=false means "not UTF-8" (the text is
         // the lossy decoding, for display only; such a file must never be written).
-        // A NUL also means "not UTF-8": UTF-16 WITHOUT a BOM whose text is ASCII only is valid UTF-8
-        // byte by byte ("#\0 \0T\0…"), and none of its "### TASK-<n>" lines could be found (no text
-        // file of this app contains a NUL).
+        // UTF-16 WITHOUT a BOM whose text is (mostly) ASCII is valid UTF-8 byte by byte ("#\0 \0T\0…"),
+        // and none of its "### TASK-<n>" lines could be found: a NUL in (nearly) every other byte
+        // (utf16WithoutBom) also means "not UTF-8". A NUL elsewhere in valid UTF-8 text (typed or pasted
+        // by mistake, or left by a damaged file) is NOT an encoding problem: the parsers report it with
+        // its line (nulCharProblems → 'nul-char'), so that the message can say what to delete.
         function decodeUtf8(bytes) {
             try {
                 const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-                return { text, valid: !text.includes('\0') };
+                return { text, valid: !(text.includes('\0') && utf16WithoutBom(bytes)) };
             } catch (e) {
                 return { text: new TextDecoder('utf-8').decode(bytes), valid: false };
             }
+        }
+
+        // 'le' | 'be' when the bytes look like UTF-16 without a BOM: at least a quarter of the bytes at
+        // one parity are NUL (an ASCII character in UTF-16 is "X\0" (LE) / "\0X" (BE)) and the other
+        // parity has almost none. A few NULs in UTF-8 text, or a run of NULs (both parities), are not.
+        function utf16WithoutBom(bytes) {
+            const b = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+            const n = b.length;
+            let even = 0, odd = 0;
+            for (let i = 0; i < n; i++) if (b[i] === 0) { if (i & 1) odd++; else even++; }
+            const many = (k, of) => of > 0 && k * 4 >= of;
+            if (many(odd, n >> 1) && even * 8 <= odd) return 'le';
+            if (many(even, (n + 1) >> 1) && odd * 8 <= even) return 'be';
+            return null;
+        }
+
+        // A line with its invisible problem characters made visible: NUL → "␀" (U+2400), a lone
+        // surrogate → "\uFFFD"; long lines are cut around the first one.
+        function visibleLine(line) {
+            const s = String(line);
+            const at = Math.max(0, firstUnwritable(s));
+            const from = Math.max(0, at - 40);
+            let out = '';
+            for (let i = from; i < s.length && i < from + 100; i++) {
+                const c = s.charCodeAt(i);
+                if (c === 0) out += '\u2400';
+                else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length && s.charCodeAt(i + 1) >= 0xDC00 && s.charCodeAt(i + 1) <= 0xDFFF) { out += s[i] + s[i + 1]; i++; }
+                else if (c >= 0xD800 && c <= 0xDFFF) out += '\uFFFD';
+                else out += s[i];
+            }
+            return (from > 0 ? '…' : '') + out + (from + 100 < s.length ? '…' : '');
+        }
+
+        // NUL (U+0000) in otherwise valid UTF-8 text. It is invisible, text editors / grep / AI tools
+        // take a file containing one for a binary file, and a run of NULs is the typical trace of a file
+        // damaged by a crash: the file is opened read-only, with the line of the first NUL, so that the
+        // user can delete it (saving the file again as UTF-8 does not remove it).
+        // → [] or [{ code: 'nul-char', line, count, lines: ["<line>: <text with ␀>", … (at most 5)] }].
+        function nulCharProblems(content) {
+            const text = String(content ?? '');
+            if (!text.includes('\0')) return [];
+            const lines = text.split('\n');
+            const at = [];
+            let count = 0;
+            lines.forEach((l, i) => {
+                if (!l.includes('\0')) return;
+                at.push(i + 1);
+                count += l.split('\0').length - 1;
+            });
+            return [{ code: 'nul-char', line: at[0], count, lines: at.slice(0, 5).map(n => `${n}: ${visibleLine(lines[n - 1])}`) }];
+        }
+
+        // Index of the first character this app never writes, or -1: NUL (the file would open
+        // read-only, see nulCharProblems) and a lone UTF-16 surrogate (written as U+FFFD, so the file
+        // would not read back as written).
+        function firstUnwritable(s) {
+            for (let i = 0; i < s.length; i++) {
+                const c = s.charCodeAt(i);
+                if (c === 0) return i;
+                if (c >= 0xD800 && c <= 0xDBFF) {
+                    const d = s.charCodeAt(i + 1);
+                    if (d >= 0xDC00 && d <= 0xDFFF) { i++; continue; }
+                    return i;
+                }
+                if (c >= 0xDC00 && c <= 0xDFFF) return i;
+            }
+            return -1;
+        }
+
+        // Text that must not be written as it is (firstUnwritable). Every input that ends up in a file
+        // (task form, subtasks of the detail view, columns) is checked before anything is changed, and
+        // writeFileChecked() refuses such content as the last line of defence.
+        // → [] or [{ code: 'unwritable-char', line?, lines }] (opts.lineNumbers: "<line>: " in front).
+        function unwritableTextProblems(text, opts = {}) {
+            const s = String(text ?? '');
+            if (firstUnwritable(s) < 0) return [];
+            const lines = s.split('\n');
+            const bad = [];
+            lines.forEach((l, i) => { if (firstUnwritable(l) >= 0) bad.push(i); });
+            const p = { code: 'unwritable-char', lines: bad.slice(0, 5).map(i => (opts.lineNumbers ? `${i + 1}: ` : '') + visibleLine(lines[i])) };
+            if (opts.lineNumbers) p.line = bad[0] + 1;
+            return [p];
         }
 
         // Drop trailing blank lines and "---" separators (old files put one between tasks).
@@ -787,6 +871,7 @@
             if (inNotes.length) warnings.push({ code: 'subtasks-in-notes', lines: inNotes });
             const badDates = nonIsoDates(tasks);
             if (badDates.length) warnings.push({ code: 'non-iso-date', lines: badDates });
+            problems.push(...nulCharProblems(content));
 
             return { config, tasks, formatV2, problems, warnings };
         }
@@ -809,6 +894,7 @@
             if (dups.length) warnings.push({ code: 'duplicate-id', ids: dups });
             const badDates = nonIsoDates(tasks);
             if (badDates.length) warnings.push({ code: 'non-iso-date', lines: badDates });
+            problems.push(...nulCharProblems(content));
             const formatV2 = /<!--\s*Format:\s*v2\s*-->/i.test(content);
             return { tasks, preamble, formatV2, problems, warnings };
         }
@@ -853,6 +939,10 @@
         // the same shape as parseKanbanContent()'s.
         function taskWriteProblems(task, columns) {
             const md = serializeTask(task);
+            // A NUL would make the whole file read-only on the next load (and is not seen by the
+            // round trip below: it reads back unchanged); a lone surrogate would be written as U+FFFD.
+            const bad = unwritableTextProblems(md);
+            if (bad.length) return bad.map(p => ({ ...p, id: task.id }));
             const header = md.slice(0, md.indexOf('\n'));
             const h = header.match(TASK_HEADER_RE);
             if (!h || !h[2].trim() || h[2].trim() !== String(task.title ?? '')) {
@@ -871,6 +961,21 @@
                 problems.push({ code: 'unstable-task', id: task.id, lines: md.split('\n').filter(l => l.trim() && !back.has(l)) });
             }
             return problems;
+        }
+
+        // Would this configuration, once written, read back with the same columns and without a
+        // problem? Used by the column dialog before it changes anything (a NUL or a line separator in a
+        // column name would otherwise be saved and make the board read-only on the next load).
+        function configWriteProblems(cfg) {
+            const md = generateKanbanContent(cfg, []);
+            const bad = unwritableTextProblems(md);
+            if (bad.length) return bad;
+            const r = parseKanbanContent(md);
+            if (r.problems.length) return r.problems;
+            const cols = cfg.columns || [];
+            const same = r.config.columns.length === cols.length
+                && r.config.columns.every((c, i) => c.name === cols[i].name && c.id === cols[i].id);
+            return same ? [] : [{ code: 'unstable-header', lines: cols.map(c => `${c.name} (${c.id})`) }];
         }
 
         function withEol(text, eol) {
