@@ -918,6 +918,16 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     await page.click('#taskFormSubmitBtn');
     await waitIdle(page);
     assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-003 \| C2\n/);
+    // The NULs start inside a Japanese character (the usual case): still "NUL", not "not UTF-8".
+    const ja = Buffer.from(archive(task(2, '売上の集計', '\n請求書を確認する', 'done')));
+    const inside = ja.indexOf(Buffer.from('請')) + 1;
+    await createDir(page, 'q', { 'kanban.md': kanban });
+    await writeBytes(page, 'q', 'archive.md', Buffer.concat([ja.subarray(0, inside), Buffer.alloc(200)]));
+    await openFolder(page, 'q');
+    assert.deepEqual(await page.evaluate(() => (session.blocked.archive || []).map((p) => p.code)), ['nul-char']);
+    await page.click('#newTaskBtn');
+    assert.match(await notificationText(page), /archive\.md contains NUL characters/);
+    assert.doesNotMatch(await page.evaluate(() => document.getElementById('syncBannerDetail').textContent), /not UTF-8/);
   });
 
   it('a NUL in valid UTF-8 opens read-only as "nul-char" with its line; UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', async ({ page }) => {

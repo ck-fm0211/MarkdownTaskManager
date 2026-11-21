@@ -358,6 +358,32 @@ describe('a NUL in UTF-8 text is not "not UTF-8"; UTF-16 without a BOM still is 
     assert.ok(!lines[0].includes('\uFFFD'), lines[0]);
     assert.match(lines[0], /^1: 😀x+\u2400end$/);
   });
+  test('a run of NULs that cuts a character (the damaged end of a Japanese file) is nul-char, not "not UTF-8"', () => {
+    const bytes = new TextEncoder().encode(v2Board('### TASK-001 | 売上の集計\n**Status**: todo\n\n説明: 請求書を確認する\n'));
+    const kinds = new Set();
+    // Every cut position in the last 60 bytes, with NULs from there to the end (as a crash leaves it).
+    for (let cut = bytes.length - 60; cut < bytes.length; cut++) {
+      const damaged = Buffer.concat([Buffer.from(bytes.subarray(0, cut)), Buffer.alloc(200)]);
+      const d = F.decodeUtf8(damaged);
+      assert.equal(d.valid, true, `cut at ${cut}`);
+      const codes = plain(F.parseKanbanContent(d.text).problems).map((p) => p.code);
+      assert.ok(codes.includes('nul-char'), `cut at ${cut}: ${codes}`);
+      kinds.add((bytes[cut] & 0xC0) === 0x80 ? 'inside a character' : 'at a boundary');
+    }
+    assert.deepEqual([...kinds].sort(), ['at a boundary', 'inside a character'], 'both kinds of cut were tried');
+    // NULs written over the middle (the text goes on after them, starting inside a character).
+    const mid = Buffer.from(bytes);
+    const at = mid.indexOf(Buffer.from('請')) + 1;
+    mid.fill(0, at, at + 7);
+    assert.equal(F.decodeUtf8(mid).valid, true);
+  });
+  test('guard: Shift_JIS and UTF-16 with a BOM stay "not UTF-8" also with NULs in them', () => {
+    const sjis = Buffer.concat([Buffer.from('# Board\n### TASK-001 | '), Buffer.from([0x94, 0x84, 0x8f, 0xe3]), Buffer.from('\n'), Buffer.alloc(100)]);
+    assert.equal(F.decodeUtf8(sjis).valid, false, 'Shift_JIS with a NUL run');
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('# 売上\n### TASK-001 | 集計\n', 'utf16le')]);
+    assert.equal(F.decodeUtf8(utf16).valid, false, 'UTF-16LE with a BOM');
+    assert.equal(F.decodeUtf8(Buffer.from(utf16).swap16()).valid, false, 'UTF-16BE with a BOM');
+  });
   test('a run of NULs (e.g. the damaged end of a file) is nul-char too, not UTF-16', () => {
     const text = board + '\0'.repeat(300);
     assert.equal(F.decodeUtf8(new TextEncoder().encode(text)).valid, true);

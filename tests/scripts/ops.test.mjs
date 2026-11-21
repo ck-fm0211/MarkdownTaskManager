@@ -801,6 +801,16 @@ describe('review round 8 (ops)', () => {
     assert.equal(n2.code, 1, n2.out);
     assert.match(n2.out, /archive\.md に NUL 文字があります/);
     assert.doesNotMatch(n2.out, /TASK-\d/);
+    // The same, with the NULs starting inside a Japanese character (the usual case for a crash).
+    const dir3 = tmp();
+    writeFileSync(join(dir3, 'kanban.md'), readFileSync(join(ROOT, 'examples', 'kanban.md')));
+    const ja = Buffer.from(readFileSync(join(ROOT, 'archive.md'), 'utf8') + '\n### TASK-001 | 売上の集計\n**Status**: done\n\n請求書を確認する\n');
+    const inside = ja.indexOf(Buffer.from('請')) + 1;
+    writeFileSync(join(dir3, 'archive.md'), Buffer.concat([ja.subarray(0, inside), Buffer.alloc(200)]));
+    const c3 = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir3]);
+    assert.match(c3.out, /archive\.md: NUL 文字.*行目にあります/);
+    assert.doesNotMatch(c3.out, /UTF-8 ではありません/, 'not "save it again as UTF-8"');
+    assert.match(c3.out, /次の ID: （NUL 文字のあるファイルがあるため決められません）/);
   });
 
   test('guard: tasks check / next-id: UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', () => {

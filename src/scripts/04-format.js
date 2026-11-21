@@ -72,13 +72,42 @@
         // (utf16WithoutBom) also means "not UTF-8". A NUL elsewhere in valid UTF-8 text (typed or pasted
         // by mistake, or left by a damaged file) is NOT an encoding problem: the parsers report it with
         // its line (nulCharProblems → 'nul-char'), so that the message can say what to delete.
+        // A file damaged by a run of NULs written over part of it (the typical trace of a crash) is still
+        // UTF-8 text even when the run starts or ends in the middle of a character: it is reported as
+        // nul-char (delete the NULs / restore the file), not as another encoding ("save it again as UTF-8"
+        // would not repair it). The text is then the lossy decoding (U+FFFD where a character was cut);
+        // such a file is read-only anyway.
         function decodeUtf8(bytes) {
             try {
                 const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
                 return { text, valid: !(text.includes('\0') && utf16WithoutBom(bytes)) };
             } catch (e) {
-                return { text: new TextDecoder('utf-8').decode(bytes), valid: false };
+                const text = new TextDecoder('utf-8').decode(bytes);
+                return { text, valid: text.includes('\0') && !utf16WithoutBom(bytes) && utf8ApartFromNulCuts(bytes) };
             }
+        }
+
+        // Valid UTF-8 apart from characters cut by NUL runs: every part between NULs is valid UTF-8, except
+        // that a part may begin with the rest (1-3 continuation bytes) of a character cut by the NULs before
+        // it and end with the start of a character cut by the NULs after it.
+        function utf8ApartFromNulCuts(bytes) {
+            const b = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+            const n = b.length;
+            for (let i = 0; i < n;) {
+                if (b[i] === 0) { i++; continue; }
+                let j = i;
+                while (j < n && b[j] !== 0) j++;
+                let k = i;
+                if (i > 0) while (k < j && k < i + 3 && (b[k] & 0xC0) === 0x80) k++;
+                try {
+                    // stream: an incomplete character at the end (cut by the following NULs) is no error.
+                    new TextDecoder('utf-8', { fatal: true }).decode(b.subarray(k, j), { stream: j < n });
+                } catch (e) {
+                    return false;
+                }
+                i = j;
+            }
+            return true;
         }
 
         // 'le' | 'be' when the bytes look like UTF-16 without a BOM:
