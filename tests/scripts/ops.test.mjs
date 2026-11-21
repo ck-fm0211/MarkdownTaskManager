@@ -536,7 +536,10 @@ describe('review round 7 (ops)', () => {
     assert.match(c.out, /archive\.md: UTF-8 ではありません/);
   });
 
-  test('restore:verify --reuse-node-modules: a signal sent to the script alone stops it at once (round 7: review 2)', { timeout: 180000 }, async () => {
+  // On Windows, child.kill('SIGTERM' / 'SIGINT') ends the process at once (TerminateProcess): no handler
+  // runs there, so the link cannot be removed by the script (see docs/ja/OPERATIONS.md).
+  const winKill = isWin && 'Windows: child.kill() terminates the process forcibly, the signal handlers never run';
+  test('restore:verify --reuse-node-modules: a signal sent to the script alone stops it at once (round 7: review 2)', { skip: winKill, timeout: 180000 }, async () => {
     const proj = projectCopy();
     // A slow build that writes its process id (it runs in the restore folder).
     writeFileSync(join(proj, 'build.mjs'), "import { writeFileSync } from 'node:fs';\nwriteFileSync('build.pid', String(process.pid));\nsetTimeout(() => {}, 20000);\n");
