@@ -91,8 +91,9 @@ Windows では `tools\windows\*.cmd` をダブルクリックしても実行で�
   運用データとみなして除外し、注意を表示します（大文字・小文字は区別しません）。
   - `kanban.md` / `archive.md`、その退避・書き出し（`kanban.v1-backup.md`、`kanban.unsaved-….md` など。名前だけで判定）
   - よくあるコピーの名前（中身は問いません。空でも）: 「kanban - コピー.md」「kanban - Copy (2).md」「kanban (2).md」
-    「kanban copy.md」「Copy of kanban.md」、OneDrive の競合コピー「kanban-PC名.md」（PC 名が大文字・数字・`-` だけのもの。
-    例: `kanban-DESKTOP-ABC123.md`）。`archive` も同じ
+    「kanban copy.md」「Copy of kanban.md」、OneDrive の競合コピー「kanban-PC名.md」（PC 名が大文字で始まり、大文字・数字・`-`
+    だけの 5 文字以上で、数字か `-` を含むもの。例: `kanban-DESKTOP-ABC123.md`、`archive-LAPTOP-01.md`。`kanban-API.md` や
+    `archive-2025.md` は名前では判定せず、次の中身の判定によります）。`archive` も同じ
   - そのほか名前が `kanban` / `archive` で始まる `.md` で、中身がタスクのファイルのもの（`### TASK-<番号>` / `## TASK-<番号>` の行、
     `<!-- Format: v2 -->`・`<!-- Config: Last Task ID: … -->`、`## ⚙️ Configuration`、`**Columns**:` の行のどれかがある。先頭 64 KB を、
     NUL を除いて調べるので UTF-16 のコピーも含みます）。中身で判定するため、`kanban-ideas.md` のようなメモや

@@ -108,7 +108,8 @@ npm run check       # build → test
   `await` のたびに古い要求でないか確認してください（後から番号を取ると、その間に始まった利用者の操作を追い越します）。
 - タスクのメタデータ行かどうかは `metaLineMask()`（04-format.js）で判定してください。解析（`parseTask`）と欠落検査
   （`blockTokens`）が同じ規則を使わないと、正常なファイルが読み取り専用になったり、説明の行が項目になったりします。
-- 新しいタスクの ID を決める前に `canCreateNewTask()` を呼んでください（`archive.md` が読めない・UTF-8 でない間は作らない）。
+- 新しいタスクの ID を決める前に `canCreateNewTask()` を呼んでください（`archive.md` が読めない・UTF-8 でない・NUL 文字がある
+  （`nul-char`）間は作らない。`scripts/tasks.mjs` の `next-id` も同じ規則で、`kanban.md` の NUL でも止まります）。
 - `scripts/` で、設定が壊れていても処理を続けるものは `loadConfig({ lenient: true })` を使い、`cfg.errors` を確認してください
   （環境変数で指定したフォルダーは有効なまま）。ZIP や記録ファイルに残す文言には、例外のメッセージをそのまま入れないこと
   （`JSON.parse` のメッセージは入力の一部を含みます。位置は `jsonErrorWhere()`）。

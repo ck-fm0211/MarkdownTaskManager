@@ -197,7 +197,7 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
   part…), the app opens it **read-only**. Run `npm run tasks -- check` after editing.
 - Task ids are unique across `kanban.md` **and** `archive.md`. Get a new one with
   `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids. While a file is
-  not UTF-8 (Shift_JIS, UTF-16 without a BOM …), `next-id` prints no id and exits with code 1 (its ids cannot
+  not UTF-8 (Shift_JIS, UTF-16 with or without a BOM …) or contains a NUL character, `next-id` prints no id and exits with code 1 (its ids cannot
   be read): save it as UTF-8 first.
   Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
 - Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
@@ -222,7 +222,8 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
 - **No NUL characters (U+0000).** A file containing one is opened read-only (editors and AI tools take it
   for a binary file, and NULs are often what a damaged file contains); `npm run tasks -- check` reports
   the line (`NUL 文字（U+0000…）が N 行目にあります`). Delete the character — saving as UTF-8 does not
-  remove it. The app itself refuses to write one.
+  remove it — and restore the file from the OneDrive version history if text around it is missing. Until
+  then `next-id` and the app give no new id. The app itself refuses to write one.
 - Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` — that makes the board read-only until it
   is fixed; `2026-1-5` / `20261231` are kept but reported by `npm run tasks -- check` as `⚠ non-iso-date`,
   and the browser's date fields cannot show them).

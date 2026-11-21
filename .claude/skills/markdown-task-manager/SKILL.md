@@ -55,8 +55,8 @@ What was done.
 - Ask the user to stop editing in the browser before you edit; the app refuses to overwrite
   external changes (it shows a conflict) but simultaneous writes cannot be prevented.
 - New id: `npm run tasks -- next-id` (unique across kanban.md AND archive.md). Never reuse ids.
-  If it prints no id and exits 1, a file is not UTF-8 (Shift_JIS, UTF-16 without a BOM …): save it as
-  UTF-8 and run it again.
+  If it prints no id and exits 1, a file is not UTF-8 (Shift_JIS, UTF-16 with or without a BOM …) or contains a
+  NUL character: save it as UTF-8 / delete the NUL, then run it again.
 - After editing: `npm run tasks -- check` must print `[OK]` (otherwise the app opens the file read-only).
 - Archive = append to `archive.md` first, then remove from `kanban.md`; keep `**Status**:`.
 - Japanese text is fine everywhere except the Markdown keys (`**Status**`, `## Tasks`, …).
@@ -64,7 +64,8 @@ What was done.
   `Set-Content` / `Add-Content` / `Out-File` / `>` (they write Shift_JIS or UTF-16): the app then opens
   the file read-only. Use your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default).
 - Never write a NUL character (U+0000): the app opens such a file read-only. If `check` reports
-  `NUL 文字 … N 行目`, delete that character (saving as UTF-8 does not remove it).
+  `NUL 文字 … N 行目`, delete that character (saving as UTF-8 does not remove it); until then no new id
+  is given.
 - Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` or `2026-1-5`).
 
 ## 🔄 Workflow
