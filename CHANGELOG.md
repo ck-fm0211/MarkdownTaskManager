@@ -9,6 +9,35 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes, round 7 (external review of `9071e08..c966c91`)
+Data protection
+- A file whose text contains a NUL (U+0000) is "not UTF-8": UTF-16 without a BOM whose text is ASCII only is
+  valid UTF-8 byte by byte, so such an archive.md was accepted, its ids were not counted (a new task got an
+  archived task's id; `tasks next-id` printed it, `check` said [OK]) and archiving wrote UTF-8 lines into it.
+  It now opens read-only like other non-UTF-8 files; the messages name UTF-16 too.
+- `restore:verify`: a signal sent to the script alone (`kill <pid>`) let the check run to the end and report
+  OK with exit code 0 (the handlers could not run while `spawnSync` blocked). `npm ci` and the build now run
+  asynchronously; a signal stops the running step (`taskkill /T` on Windows), removes the link and exits
+  with 128 + the signal number.
+- `--check-build`: the build's output path relative to the project (which may contain spaces, e.g. a user
+  folder) is hidden; part of it stayed in manifest.json / README-RESTORE.md, also of a release.
+- With an unreadable configuration, folders holding only task-file backups / exports
+  (`kanban.v1-backup.md`, `kanban.unsaved-….md`) or names in another letter case are left out too.
+
+App
+- Load warnings (duplicate ids, unknown status, dates that are not YYYY-MM-DD) are no longer replaced at
+  once by "Folder loaded" / "Project … loaded" / "Project restored" (`notifyProjectOpened`), and
+  archive.md's own warnings are shown ("archive.md TASK-…").
+- Enter in the task form's subtask field adds the subtask (it submitted the whole form).
+- The save notification says when a trailing `---` of the description / notes was dropped (also a heading
+  underline).
+- `isIsoDate`: the years 0001-0099 are valid (Date.UTC read them as 1900-1999); 0000 is not.
+
+Tests and docs
+- Regression tests for every item (unit 3, scripts 4, browser 4); all fail on `c966c91` except the guard
+  test "ordinary UTF-8 text is still valid". 166 tests.
+- SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING updated.
+
 ### Review fixes, round 6 (two external reviews of `9071e08`)
 Data protection
 - Task form: subtask text typed but not added with "+" is part of the form input: "Save" adds it as a

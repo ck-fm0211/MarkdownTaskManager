@@ -83,7 +83,12 @@ npm run check       # build → test
   `writeFileChecked()` を使ってください（14-sync.js）。`createWritable()` を直接呼ばないこと。`writeFileChecked()` は
   読み取り専用（`session.blocked`）・競合中のファイルへの書き込みを拒否します。待ち行列に入れた処理は、実行を始める
   時点で前提（読み取り専用でない・競合がない）をもう一度確認してください（10-archive.js の `refusedAtStart()`）。
-- ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外を検出）。
+- ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外と、
+  NUL 文字を含むもの（BOM のない UTF-16）を検出）。
+- プロジェクトを開いた後の成功通知は `notifyProjectOpened()`（04-io.js）で出してください。`showNotification()` で出すと、
+  直前に表示した読み込みの警告（重複 ID・日付など）を消してしまいます。
+- `scripts/verify-restore.mjs` の時間のかかる処理（`npm ci`・ビルド）は `runStep()`（非同期）で実行してください。
+  `spawnSync` の間はシグナルを処理できず、中断しても最後まで実行してしまいます。
 - プロジェクトを開く処理を追加する場合は、`newProjectRequest()`（03-storage.js）で要求番号を**最初の `await` より前に**取り、
   `await` のたびに古い要求でないか確認してください（後から番号を取ると、その間に始まった利用者の操作を追い越します）。
 - タスクのメタデータ行かどうかは `metaLineMask()`（04-format.js）で判定してください。解析（`parseTask`）と欠落検査
