@@ -84,7 +84,8 @@ npm run check       # build → test
   読み取り専用（`session.blocked`）・競合中のファイルへの書き込みを拒否します。待ち行列に入れた処理は、実行を始める
   時点で前提（読み取り専用でない・競合がない）をもう一度確認してください（10-archive.js の `refusedAtStart()`）。
 - ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外と、
-  BOM のない UTF-16（1 バイトおきの NUL、または UTF-16 の改行。`utf16WithoutBom`）を検出）。正しい UTF-8 の中の NUL 文字は `decodeUtf8` ではなく
+  BOM のない UTF-16（1 バイトおきの NUL、または UTF-16 の改行。`utf16WithoutBom`）を検出）。NUL の連続で文字が切れただけの
+  UTF-8（`utf8ApartFromNulCuts`）は UTF-8 とみなします。正しい UTF-8 の中の NUL 文字は `decodeUtf8` ではなく
   解析（`parseKanbanContent` / `parseArchiveContent` の `nulCharProblems` → `nul-char`、行番号つき）が報告します。UTF-8 で
   ないファイルの NUL は `not-utf8` に含めます（`04-io.js` の `loadProblems`、`scripts/tasks.mjs` も同じ規則）。
 - ファイルに文字列を書く入力を追加するときは、変更する前に読み戻しを確認してください: タスクは `taskWriteProblems()`
@@ -98,6 +99,8 @@ npm run check       # build → test
   `spawnSync` の間はシグナルを処理できず、中断しても最後まで実行してしまいます。同期処理（`rmSync` など）を長く続けると
   同じことが起きるので、削除は `fs/promises` の `rm` で行い、次の段階の前と「OK」の直前に `checkpoint()` を呼んでください。
   `fail()` は非同期です（終える前に `checkpoint()` で届いていた合図を処理します）。必ず `await fail(…)` と書いてください。
+  `checkpoint()` は `setImmediate` を 2 回待ちます（1 回では、子プロセスの終了や `fs/promises` の完了の直後に続けた同期処理の
+  間に届いた合図を、まだ処理していないことがあります）。
   `runStep()` は出力を UTF-8 として読み、末尾（`OUTPUT_TAIL`）だけを保持します。失敗の表示は `lastLines()` で短くしてください
   （`process.exit()` の直前に書く長い文字列は、パイプでは途中で切れます）。止めた処理が終わらないときは 3 秒後に SIGKILL
   （`STOP_GRACE_MS`）、それでも終わらなければ PID を表示します。
