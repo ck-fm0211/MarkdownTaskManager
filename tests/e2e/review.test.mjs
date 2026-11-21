@@ -746,4 +746,23 @@ describe('review round 7: task form and load warnings', () => {
     assert.match(await notificationText(page), /archive\.md TASK-001 Finished: 2026-1-5/);
   });
 
+  it('Enter in the subtask field adds the subtask; it does not save or close the form (round 7: review 5)', async ({ page }) => {
+    const start = board('', { lastId: 0 });
+    await createDir(page, 'p', { 'kanban.md': start, 'archive.md': archive('') });
+    await openFolder(page, 'p');
+    await page.click('#newTaskBtn');
+    await page.fill('#taskTitle', '新規');
+    await page.fill('#formSubtaskInput', 'first');
+    await page.press('#formSubtaskInput', 'Enter');
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), true, 'the form is still open');
+    assert.deepEqual(await page.evaluate(() => formSubtasks.map((s) => s.text)), ['first']);
+    assert.equal(await page.inputValue('#formSubtaskInput'), '');
+    await page.press('#formSubtaskInput', 'Enter'); // empty field: nothing happens
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), true);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), start, 'nothing saved yet');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-001 \| 新規\n[\s\S]*\*\*Subtasks\*\*:\n- \[ \] first\n(?!- \[ \] first)/);
+  });
+
 });

@@ -305,6 +305,15 @@
             `).join('');
         }
 
+        // Enter in the subtask field adds the subtask (as in the task detail view). Without this, Enter
+        // submitted the whole form: a new task was created / the form was saved and closed. Enter that
+        // confirms an IME conversion (isComposing / keyCode 229) is left to the IME.
+        document.getElementById('formSubtaskInput').addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            addFormSubtask();
+        });
+
         function addFormSubtask() {
             const input = document.getElementById('formSubtaskInput');
             const text = input.value.trim();
