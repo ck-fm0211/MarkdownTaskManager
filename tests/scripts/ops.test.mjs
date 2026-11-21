@@ -612,6 +612,9 @@ describe('review round 7 (ops)', () => {
 describe('review round 8 (ops)', () => {
   const noEnv = { MTM_APP_DIR: '', MTM_DATA_DIR: '', MTM_BACKUP_DIR: '' };
   const winSignals = isWin && 'Windows: child.kill() terminates the process forcibly, the signal handlers never run';
+  // The tests with 20000 files remove what they made (the project copy, the ZIP, the restore folder).
+  const removeAll = (...dirs) => dirs.filter(Boolean).forEach((d) => { try { rmSync(d, { recursive: true, force: true }); } catch { /* gone */ } });
+  const restoreDirOf = (output) => { const m = output.match(/展開先: (.+)\n/); return m ? m[1].trim() : null; };
   const zipIn = (out) => join(out, readdirSync(out).find((n) => n.endsWith('.zip')));
   const backupOf = (proj) => {
     const out = tmp();
@@ -639,15 +642,19 @@ describe('review round 8 (ops)', () => {
     for (let i = 0; i < 20000; i++) writeFileSync(join(proj, 'bulk', `f${i}.txt`), `${i}\n`);
     const zip = backupOf(proj);
     const temp = tmp('mtm-verify-tmp-');
-    const v = verifyInBackground(proj, [zip, '--reuse-node-modules'], { TMPDIR: temp, TMP: temp, TEMP: temp });
-    let sent = null;
-    // "ビルド: 成功" is printed after the build has ended: the script is in its checks / the removal.
-    v.onOutput((o) => { if (sent === null && /ビルド: 成功/.test(o)) sent = v.child.kill('SIGTERM'); });
-    const r = await v.exited;
-    assert.equal(sent, true, `the signal reached the running script:\n${v.output()}`);
-    assert.doesNotMatch(v.output(), /復元確認 OK/);
-    assert.match(v.output(), /中断されました（SIGTERM）/);
-    assert.equal(r.code, 143, v.output());
+    try {
+      const v = verifyInBackground(proj, [zip, '--reuse-node-modules'], { TMPDIR: temp, TMP: temp, TEMP: temp });
+      let sent = null;
+      // "ビルド: 成功" is printed after the build has ended: the script is in its checks / the removal.
+      v.onOutput((o) => { if (sent === null && /ビルド: 成功/.test(o)) sent = v.child.kill('SIGTERM'); });
+      const r = await v.exited;
+      assert.equal(sent, true, `the signal reached the running script:\n${v.output()}`);
+      assert.doesNotMatch(v.output(), /復元確認 OK/);
+      assert.match(v.output(), /中断されました（SIGTERM）/);
+      assert.equal(r.code, 143, v.output());
+    } finally {
+      removeAll(dirname(proj), dirname(zip), temp);
+    }
   });
 
   test('restore:verify: a check that fails after a signal arrived during synchronous work still ends with 128 + the signal number (round 8: review 低-2)', { skip: winSignals, timeout: 240000 }, async () => {
@@ -659,15 +666,20 @@ describe('review round 8 (ops)', () => {
     const entries = readZip(good).map((e) => (e.name === 'bulk/f19999.txt' ? { ...e, data: Buffer.from('changed\n') } : e));
     const zip = join(tmp(), 'changed.zip');
     writeZip(zip, entries);
-    const v = verifyInBackground(proj, [zip, '--reuse-node-modules']);
-    let sent = null;
-    // "展開先:" is printed right before the extraction of the 20000 files starts.
-    v.onOutput((o) => { if (sent === null && /展開先: /.test(o)) sent = v.child.kill('SIGTERM'); });
-    const r = await v.exited;
-    assert.equal(sent, true, v.output());
-    assert.match(v.output(), /SHA-256 が一致しません: bulk\/f19999\.txt/, 'the check itself failed');
-    assert.match(v.output(), /中断されました（SIGTERM）/);
-    assert.equal(r.code, 143, v.output());
+    let v = null;
+    try {
+      v = verifyInBackground(proj, [zip, '--reuse-node-modules']);
+      let sent = null;
+      // "展開先:" is printed right before the extraction of the 20000 files starts.
+      v.onOutput((o) => { if (sent === null && /展開先: /.test(o)) sent = v.child.kill('SIGTERM'); });
+      const r = await v.exited;
+      assert.equal(sent, true, v.output());
+      assert.match(v.output(), /SHA-256 が一致しません: bulk\/f19999\.txt/, 'the check itself failed');
+      assert.match(v.output(), /中断されました（SIGTERM）/);
+      assert.equal(r.code, 143, v.output());
+    } finally {
+      removeAll(dirname(proj), dirname(good), dirname(zip), v && restoreDirOf(v.output()));
+    }
   });
 
   test('restore:verify: a step that ignores SIGTERM is killed; nothing is left running after the script (round 8: review 低-3)', { skip: winSignals, timeout: 120000 }, async () => {
