@@ -12,6 +12,8 @@
 
 | ドキュメント | 内容 |
 |---|---|
+| [COMPANY_PC_SETUP.md](COMPANY_PC_SETUP.md) | GitHub から clone できない会社 PC での初回セットアップ（Windows・WSL・macOS、OneDrive・Google Drive） |
+| [SETUP_PROMPT.md](SETUP_PROMPT.md) | Codex などに初回セットアップを任せるための指示 |
 | [USER_GUIDE.md](USER_GUIDE.md) | 利用ガイド（画面の使い方、競合が出たとき、AI と併用するときのルール） |
 | [OPERATIONS.md](OPERATIONS.md) | 運用ガイド（フォルダー構成、初期設定、配備、バックアップ、復元、会社 PC への持ち込み、将来拡張） |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発ガイド（ソース構成、ビルド、テスト、翻訳の追加） |
@@ -26,7 +28,7 @@
 2. 「📁 フォルダーを選択して開始」で、タスクを置く空のフォルダーを選ぶ → `kanban.md` / `archive.md` を作成するか確認されるので「OK」。
 3. 「➕ タスク」でタスクを作成。変更は自動で Markdown に保存されます（右上の表示が「✓ 保存済み」）。
 
-会社 PC での配置（開発・運用アプリ・運用データ・バックアップの 4 フォルダー）は [OPERATIONS.md](OPERATIONS.md) を見てください。
+会社 PC にソースを持ち込んで使う場合は [会社 PC でのセットアップ](COMPANY_PC_SETUP.md) を見てください。
 
 ## ライセンス
 
