@@ -92,7 +92,7 @@ if (cmd === 'where') {
   const q = F.formatTaskId(F.taskNumber(args[1] || ''));
   let found = 0;
   for (const [label, list] of [['kanban.md', active], ['archive.md', archived]]) {
-    list.filter((t) => t.id === q).forEach((t) => { found++; console.log(`--- ${label}\n${F.serializeTask(t)}`); });
+    list.filter((t) => t.id === q).forEach((t) => { found++; console.log(`--- ${label}\n${visible(F.serializeTask(t))}`); });
   }
   if (!found) { console.error(`${q} は見つかりません`); process.exit(1); }
 } else if (cmd === 'check') {

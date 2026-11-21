@@ -829,6 +829,9 @@ describe('review round 8 (ops)', () => {
     const c4 = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir4]);
     assert.match(c4.out, /unknown-status: TASK-003: to\u2400do/);
     assert.ok(!c4.out.includes('\0'), 'no raw NUL is printed');
+    const s4 = node(ROOT, 'scripts/tasks.mjs', ['show', 'TASK-003', '--dir', dir4]);
+    assert.match(s4.out, /\*\*Status\*\*: to\u2400do/);
+    assert.ok(!s4.out.includes('\0'), 'show prints no raw NUL either');
   });
 
   test('guard: tasks check / next-id: UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', () => {
