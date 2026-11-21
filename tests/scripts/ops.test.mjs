@@ -748,7 +748,7 @@ describe('review round 8 (ops)', () => {
     // Saved as UTF-16; a lower-case name that no copy-name rule takes: only the content check finds it.
     writeFileSync(join(proj, 'copy5', 'kanban-old16.md'), Buffer.from(boardMd, 'utf16le'));
     // The usual copy names count whatever the content (also empty or a dummy text).
-    const byName = { copy6: ['kanban - コピー.md', 'x\n'], copy7: ['Copy of kanban.md', ''], copy8: ['kanban - Copy (2).md', 'x'], copy9: ['archive-LAPTOP-01.md', ''], copy10: ['kanban copy 2.md', 'x'] };
+    const byName = { copy6: ['kanban - コピー.md', 'x\n'], copy7: ['Copy of kanban.md', ''], copy8: ['kanban - Copy (2).md', 'x'], copy9: ['archive-LAPTOP-7K3Q9ZX.md', ''], copy10: ['kanban copy 2.md', 'x'] };
     for (const [d, [f, text]] of Object.entries(byName)) { mkdirSync(join(proj, d)); writeFileSync(join(proj, d, f), text); }
     mkdirSync(join(proj, 'copy11'));
     writeFileSync(join(proj, 'copy11', 'kanban-old.md'), '# Old\n\n## TASK-001 | h2 header\n'); // task header written as h2
@@ -758,6 +758,8 @@ describe('review round 8 (ops)', () => {
     writeFileSync(join(proj, 'notes', 'archive-policy.md'), '# アーカイブの方針\n'); // lower case after "-": not a PC name
     writeFileSync(join(proj, 'notes', 'kanban-API.md'), '# API のメモ\n'); // capitals, but not like a PC name
     writeFileSync(join(proj, 'notes', 'archive-2025.md'), '# 2025 年の振り返り\n');
+    writeFileSync(join(proj, 'notes', 'archive-Q1-2025.md'), '# 第 1 四半期\n');
+    writeFileSync(join(proj, 'notes', 'kanban-TODO-LIST.md'), '# やること\n');
     mkdirSync(join(proj, 'copy12'));
     writeFileSync(join(proj, 'copy12', 'archive-2025.md'), readFileSync(join(ROOT, 'examples', 'archive.md'), 'utf8')); // a yearly archive: its content decides
     writeFileSync(join(proj, 'local.config.json'), '{ "dataDir": ');
@@ -766,7 +768,7 @@ describe('review round 8 (ops)', () => {
     assert.equal(r.code, 0, r.out);
     const names = readZip(zipIn(out)).map((e) => e.name);
     for (const d of ['copy1/', 'copy2/', 'copy3/', 'copy4/', 'copy5/', 'copy6/', 'copy7/', 'copy8/', 'copy9/', 'copy10/', 'copy11/', 'copy12/']) assert.ok(!names.some((n) => n.startsWith(d)), d);
-    for (const must of ['notes/kanban-ideas.md', 'notes/archive-policy.md', 'notes/kanban-API.md', 'notes/archive-2025.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
+    for (const must of ['notes/kanban-ideas.md', 'notes/archive-policy.md', 'notes/kanban-API.md', 'notes/archive-2025.md', 'notes/archive-Q1-2025.md', 'notes/kanban-TODO-LIST.md', 'docs/images/kanban-board.jpg', 'docs/ja/SAFETY.md', 'src/scripts/04-format.js', 'tests/unit/format.test.mjs',
       '.claude/skills/markdown-task-manager/SKILL.md', 'examples/kanban.md', 'kanban.md', 'archive.md']) assert.ok(names.includes(must), must);
     assert.match(r.out, /運用データの可能性があるため除外: copy1\//);
   });

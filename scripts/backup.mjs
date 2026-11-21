@@ -137,9 +137,10 @@ const protectedDirs = [cfg.dataDir, cfg.backupDir, cfg.appDir, outDir].filter((d
 //   NULs are removed before the check: a copy saved as UTF-16 is recognised too.
 // - the usual names of copies, whatever their content (also an empty one): "kanban - コピー.md",
 //   "kanban - Copy (2).md", "kanban (2).md", "kanban copy.md", "Copy of kanban.md", and OneDrive conflict
-//   copies "kanban-<PC name>.md" with a PC name like Windows gives one: capitals, digits and "-", at least
-//   5 characters, with a digit or a "-" ("kanban-DESKTOP-ABC123.md", "archive-LAPTOP-01.md"). Other
-//   suffixes ("kanban-API.md", "archive-2025.md") are decided by the content check below.
+//   copies "kanban-<PC name>.md" with the PC name Windows gives by default: DESKTOP- / LAPTOP- and 4 or
+//   more capitals / digits ("kanban-DESKTOP-ABC123.md", "archive-LAPTOP-7K3Q9ZX.md"). Other suffixes
+//   ("kanban-API.md", "archive-2025.md", "kanban-TODO-LIST.md", a PC name the user chose) are decided by
+//   the content check below.
 const TASK_FILE_RE = /^(kanban|archive)(\.[^\\/]*)?\.md$/i;
 const TASK_FILE_LIKE_RE = /^(kanban|archive)[^\\/]*\.md$/i;
 const TASK_CONTENT_RE = /^#{2,3}[ \t]*TASK-\d+|<!--\s*(Format:\s*v2|Config:\s*Last Task ID)|^##[ \t]+⚙|^\*\*Columns\*\*\s*[:：]/m;
@@ -152,7 +153,7 @@ const TASK_COPY_RES = [
 function isTaskFileCopyName(name) {
   if (TASK_COPY_RES.some((r) => r.test(name))) return true;
   const m = name.match(/^(kanban|archive)-(.+)\.md$/i); // OneDrive: "<name>-<PC name>.md"
-  return !!m && m[2].length >= 5 && /^[A-Z][A-Z0-9-]*$/.test(m[2]) && /[0-9-]/.test(m[2]);
+  return !!m && /^(DESKTOP|LAPTOP)-[A-Z0-9]{4,}(-\d+)?$/.test(m[2]);
 }
 function looksLikeTaskFile(path) {
   let fd = null;
