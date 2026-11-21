@@ -1,6 +1,6 @@
 # 📋 Markdown Task Manager
 
-> **[🇫🇷 Version française / French version](./readmeFR.md)** · **[🇯🇵 日本語ガイド](./docs/ja/README.md)** · **[会社 PC でのセットアップ](./docs/ja/COMPANY_PC_SETUP.md)**
+> **[🇫🇷 Version française / French version](./readmeFR.md)** · **[🇯🇵 日本語ガイド](./docs/ja/README.md)** · **[🇯🇵 会社 PC でのセットアップ](./docs/ja/COMPANY_PC_SETUP.md)**
 
 > **Fork notice** — This is a fork of [ioniks/MarkdownTaskManager](https://github.com/ioniks/MarkdownTaskManager)
 > based on V2.0 (`f173f0d`). It adds a Japanese UI, a save layer that never silently overwrites

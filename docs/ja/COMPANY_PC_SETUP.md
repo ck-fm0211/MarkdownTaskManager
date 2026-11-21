@@ -16,6 +16,9 @@ Google Drive を使う場合は、依頼にマウント済みフォルダーの�
 
 1. GitHub にアクセスできる端末で、使うブランチまたはタグを選んで **Code → Download ZIP** を実行します。手元に配布用 ZIP がある場合はそれを使えます。配布用 ZIP の作り方は [運用ガイド](OPERATIONS.md) を参照してください。
 2. 会社で認められた経路でソース ZIP を移し、同期対象外のフォルダーに展開します。このフォルダーを **A（開発）** とします。
+   Windows のデスクトップやドキュメントは OneDrive の同期対象になっていることが多く、ダウンロードも設定次第で対象になります。
+   展開先の実パスを確認し、同期対象のフォルダーは避けてください。`npm ci` で作る `node_modules` も同期されるためです。
+   `npm run config:check` では A 自体が同期対象かどうかは判定できません。
 3. `package.json`、`package-lock.json`、`src/`、`scripts/`、`task-manager.html` が同じ階層にあることを確認します。ZIP によっては展開先の中にもう一段フォルダーがあります。
 
 ## 2. 運用するフォルダーを決める
@@ -74,10 +77,11 @@ Google Drive を使う場合は、依頼にマウント済みフォルダーの�
    ```text
    npm run deploy:dry
    npm run deploy
-   npm run backup -- --no-local-config
+   npm run backup
    ```
 
    先に dry-run で配備先を確認します。配備後、B の `task-manager.html` と D の `source` 内に新しく作られた ZIP を確認します。配備先に別バージョンの HTML があれば、旧版は D の `html` に退避されます。
+   ソース ZIP には同じ PC での復元に使う `local.config.json` があれば含まれます。PC 固有のパスを ZIP に含めたくない場合は `npm run backup -- --no-local-config` を使います。
    ソース ZIP には実際のタスクデータを含めません。C を同期ドライブに置いた場合は、C のファイルもそのドライブで保全します。ローカル保存が終わったら、OneDrive または Google Drive のクライアントで同期状態を確認してください。
 
 ## 4. ブラウザーで開いて確認する

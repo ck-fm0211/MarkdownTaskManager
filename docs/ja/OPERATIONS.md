@@ -34,8 +34,8 @@ Windows・WSL・macOS での配置、マウント済みの Google Drive、同梱
    npm run build:check
    npm run test:unit
    ```
-   `npm ci` には npm レジストリへの接続が必要です。社内で接続できない場合は、接続できる環境で
-   `npm ci` 済みのフォルダーごと（`node_modules` を含めて）持ち込むか、社内のレジストリ／プロキシ設定を使ってください。
+   npm レジストリに接続できない場合は、社内レジストリ／プロキシ、用意済みの npm キャッシュ（`npm ci --offline`）、
+   または同じソース・OS・CPU アーキテクチャ・Node.js メジャーバージョンで `npm ci` 済みの `node_modules` を使ってください。
 3. B・C・D のフォルダーを OneDrive 内に作ります。
 4. `local.config.example.json` を `local.config.json` にコピーして編集します（Git 管理外）。
    ```json
