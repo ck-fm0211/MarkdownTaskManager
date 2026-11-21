@@ -84,11 +84,24 @@ npm run check       # build → test
   読み取り専用（`session.blocked`）・競合中のファイルへの書き込みを拒否します。待ち行列に入れた処理は、実行を始める
   時点で前提（読み取り専用でない・競合がない）をもう一度確認してください（10-archive.js の `refusedAtStart()`）。
 - ファイルを読むときは `file.text()` ではなく `decodeUtf8(await file.arrayBuffer())` を使ってください（UTF-8 以外と、
-  NUL 文字を含むもの（BOM のない UTF-16）を検出）。
-- プロジェクトを開いた後の成功通知は `notifyProjectOpened()`（04-io.js）で出してください。`showNotification()` で出すと、
-  直前に表示した読み込みの警告（重複 ID・日付など）を消してしまいます。
+  BOM のない UTF-16（1 バイトおきの NUL。`utf16WithoutBom`）を検出）。正しい UTF-8 の中の NUL 文字は `decodeUtf8` ではなく
+  解析（`parseKanbanContent` / `parseArchiveContent` の `nulCharProblems` → `nul-char`、行番号つき）が報告します。UTF-8 で
+  ないファイルの NUL は `not-utf8` に含めます（`04-io.js` の `loadProblems`、`scripts/tasks.mjs` も同じ規則）。
+- ファイルに文字列を書く入力を追加するときは、変更する前に読み戻しを確認してください: タスクは `taskWriteProblems()`
+  （09-task-detail.js の `subtasksWriteRefused()` も参照）、列・設定は `configWriteProblems()`。どちらも NUL 文字と対になって
+  いないサロゲートを拒否します（`unwritableTextProblems()`）。`writeFileChecked()` も同じ文字を含む内容を書かずに `refused` で
+  拒否しますが、これは最後の防衛です（そこで止まると、画面には未保存の変更が残ります）。
+- プロジェクトを開いた後・再読込の後の成功通知は `notifyProjectOpened()`（04-io.js）で出してください（🔄・自動の再読込・
+  「ディスクから再読込」も含む）。`showNotification()` で出すと、直前に表示した読み込みの警告（重複 ID・日付など）や、開いた
+  直後の保存の失敗・競合を消してしまいます。呼び出し側のエラー（一覧を更新できなかったなど）は第 2 引数で渡します。
 - `scripts/verify-restore.mjs` の時間のかかる処理（`npm ci`・ビルド）は `runStep()`（非同期）で実行してください。
-  `spawnSync` の間はシグナルを処理できず、中断しても最後まで実行してしまいます。
+  `spawnSync` の間はシグナルを処理できず、中断しても最後まで実行してしまいます。同期処理（`rmSync` など）を長く続けると
+  同じことが起きるので、削除は `fs/promises` の `rm` で行い、次の段階の前と「OK」の直前に `checkpoint()` を呼んでください。
+  `runStep()` は出力を UTF-8 として読み、末尾（`OUTPUT_TAIL`）だけを保持します。失敗の表示は `lastLines()` で短くしてください
+  （`process.exit()` の直前に書く長い文字列は、パイプでは途中で切れます）。止めた処理が終わらないときは 3 秒後に SIGKILL
+  （`STOP_GRACE_MS`）、それでも終わらなければ PID を表示します。
+- `scripts/backup.mjs` で設定が読めないときの運用データの判定は `holdsTaskFiles()` です（名前 `TASK_FILE_RE`、または名前
+  `TASK_FILE_LIKE_RE` かつ中身 `TASK_CONTENT_RE`）。中身を見ずに名前だけで広げると、`docs/` などを除外してしまいます。
 - プロジェクトを開く処理を追加する場合は、`newProjectRequest()`（03-storage.js）で要求番号を**最初の `await` より前に**取り、
   `await` のたびに古い要求でないか確認してください（後から番号を取ると、その間に始まった利用者の操作を追い越します）。
 - タスクのメタデータ行かどうかは `metaLineMask()`（04-format.js）で判定してください。解析（`parseTask`）と欠落検査
@@ -98,7 +111,8 @@ npm run check       # build → test
   （環境変数で指定したフォルダーは有効なまま）。ZIP や記録ファイルに残す文言には、例外のメッセージをそのまま入れないこと
   （`JSON.parse` のメッセージは入力の一部を含みます。位置は `jsonErrorWhere()`）。
 - 未保存の判定は `hasUnsavedWork()`（ボードの未保存 + フォームの入力）を使ってください。
-- タスクのフォームから書く値は、保存前に `taskWriteProblems()`（04-format.js）で読み戻しを確認しています。
+- タスクのフォーム・詳細画面のサブタスクから書く値は、保存前に `taskWriteProblems()`（04-format.js）で、列の管理は
+  `configWriteProblems()` で読み戻しを確認しています。
 - データを変更する操作の先頭で `guardWritable()` を呼び、読み取り専用・競合中の編集を防いでください。
 - 成功通知は保存の成功を確認してから出してください（`persistKanban(成功メッセージ)`）。
 - 形式を変える場合は `tests/unit/format.test.mjs` に往復（解析 → 生成 → 解析）のテストを追加してください。

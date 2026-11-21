@@ -9,6 +9,46 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Review fixes, round 8 (external review of `c966c91..1b3c200`)
+Data protection
+- The app never writes a NUL (U+0000). Round 7 made a NUL "not UTF-8", but a NUL typed or pasted into the
+  task form, a subtask of the detail view or a column passed the checks, was written, the read-back reported
+  a conflict ("uncertain") although the file had changed, and the next load opened the whole board read-only
+  as "not UTF-8 — save it again as UTF-8" (which cannot remove it); `tasks check` said NG, `next-id` stopped.
+  Every input that writes text refuses a NUL and an unpaired surrogate (written as U+FFFD) before anything is
+  changed (taskWriteProblems for all form fields and the detail view's subtasks, configWriteProblems for
+  columns); writeFileChecked() refuses such content without writing ('refused', last line of defence).
+- NUL detection split: UTF-16 without a BOM is recognised by NULs at one byte parity and stays "not UTF-8"; a
+  NUL in valid UTF-8 is reported as `nul-char` with the line of the first one and the count (still
+  read-only; the message says to delete it). App and CLI share the rule; `next-id` gives an id for such a
+  file. Other C0 control characters are not refused (they read back unchanged).
+- `restore:verify`: a signal during the checks after the build or the removal of the temporary folder was
+  ignored and the check ended "OK" with exit code 0 (synchronous rmSync). The folder is removed
+  asynchronously and pending signals are handled before each step and right before "OK".
+- `restore:verify`: a step that does not end on SIGTERM is killed with SIGKILL after 3 s (POSIX); if it still
+  runs, its PID is printed (it was left running and kept writing into the restore folder).
+- `restore:verify`: step output is decoded as UTF-8 (a character split between pipe chunks became U+FFFD) and
+  only its last 64 K characters are kept; the failure message shows at most 4000 characters (a long one was
+  cut off on a pipe before the exit).
+- Backup with an unreadable configuration: copies of the task files ("kanban - コピー.md", "kanban (2).md",
+  OneDrive conflict copies, also UTF-16) keep their folder out of the ZIP; a .md named kanban*/archive* counts
+  only when its content is a task file, so notes and docs/ stay in.
+
+App
+- Load warnings stay visible after 🔄, the automatic reload on focus (also with the archive dialog open) and
+  "Reload from disk" (they were replaced at once by "Changes … were loaded" / "Reloaded from disk").
+- A failed save while opening (e.g. the V1 migration), a conflict, or a recent-projects list that could not be
+  updated is shown with the "loaded" message as an error instead of being hidden by a green one.
+
+Tests and docs
+- Regression tests for every item (unit 6, scripts 6, browser 9); all fail on `1b3c200` except three guard
+  tests (UTF-16 without a BOM stays "not UTF-8" in unit and CLI, other control characters are not refused).
+  The test mock's saveDirectoryHandle returns true like the real one. The round 7 signal test is skipped on
+  Windows (child.kill() terminates there). 187 tests.
+- SAFETY / USER_GUIDE / OPERATIONS / DEVELOPMENT / TESTING, AGENTS.md, AI_WORKFLOW.md and the Claude skill
+  updated (NUL vs UTF-16, reload warnings, restore:verify signals and Windows forced termination, backup
+  exclusion of copies).
+
 ### Review fixes, round 7 (external review of `9071e08..c966c91`)
 Data protection
 - A file whose text contains a NUL (U+0000) is "not UTF-8": UTF-16 without a BOM whose text is ASCII only is
