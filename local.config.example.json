@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to local.config.json (not committed) and edit. %VAR% / ${VAR} / ~ are expanded, so no user name has to be written here. OneDriveCommercial = OneDrive for Business folder (OneDrive = personal). Run: npm run config:check",
+  "appDir": "%OneDriveCommercial%\\TaskManager\\app",
+  "dataDir": "%OneDriveCommercial%\\TaskManager\\data",
+  "backupDir": "%OneDriveCommercial%\\TaskManager\\backup"
+}

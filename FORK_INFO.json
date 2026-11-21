@@ -1,0 +1,12 @@
+{
+  "upstream": {
+    "repository": "https://github.com/ioniks/MarkdownTaskManager",
+    "tag": "V2.0",
+    "commit": "f173f0d09274a8ce107fdfefda49823e2992e88f",
+    "note": "This fork starts from upstream master at tag V2.0 (2.0.0). No automatic sync with upstream."
+  },
+  "fork": {
+    "purpose": "Japanese UI, safe co-editing with AI tools (external-change detection, no silent overwrite), offline single-file use from OneDrive, deploy/backup tooling",
+    "changelog": "CHANGELOG.md"
+  }
+}

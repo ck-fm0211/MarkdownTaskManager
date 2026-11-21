@@ -82,6 +82,10 @@ heading inside a task can break parsing. Keep notes/description heading-free.
 - Completed tasks remain in "✅ Done"
 - **Only on user request** → move to `archive.md` section `## ✅ Archives`
 - **Never archive directly at the end of work**
+- Order (no task may be lost if something fails half-way): **first append the block to
+  `archive.md`, then delete it from `kanban.md`**. Keep its `**Status**:` (the original column id —
+  it is used when the task is restored). If the same id already exists in `archive.md`, compare the
+  two blocks and ask the user; never merge or overwrite silently.
 
 ---
 
@@ -127,6 +131,7 @@ whole file. Moving a task is a single `**Status**:` edit — do **not** move the
 ```markdown
 ### TASK-001 | Fix login bug
 
+**Status**: todo
 **Priority**: Critical | **Category**: Backend | **Assigned**: @bob
 **Created**: 2025-01-20 | **Due**: 2025-01-21
 **Tags**: #bug #urgent
@@ -142,6 +147,7 @@ Check Redis, related to yesterday's deployment.
 ```markdown
 ### TASK-042 | Notification system
 
+**Status**: done
 **Priority**: High | **Category**: Backend | **Assigned**: @alice
 **Created**: 2025-01-15 | **Started**: 2025-01-18 | **Finished**: 2025-01-22
 **Tags**: #feature
@@ -174,6 +180,61 @@ Real-time notifications with WebSockets.
 - ✅ Auto-reconnection
 - ✅ Emails < 2s
 ```
+
+---
+
+## 🤝 Co-editing with the browser app (this fork)
+
+The browser app (`task-manager.html`) and AI assistants edit the same files.
+
+- The app keeps the exact text it last read. Before every save it reads the file again; if the
+  content differs it does **not** write, shows a conflict and lets the user export their unsaved
+  changes and reload. So an AI edit is never silently overwritten — but two writes in the same
+  instant cannot be prevented. **Ask the user to stop editing in the browser while you edit**,
+  and to reload (🔄) afterwards.
+- If a file contains something the app would lose on save (malformed `### TASK-` header, text
+  outside any task, non-checkbox lines inside `**Subtasks**:`, unknown lines in the configuration
+  part…), the app opens it **read-only**. Run `npm run tasks -- check` after editing.
+- Task ids are unique across `kanban.md` **and** `archive.md`. Get a new one with
+  `npm run tasks -- next-id` (max id of both files + 1) and never reuse or renumber ids. While a file is
+  not UTF-8 (Shift_JIS, UTF-16 with or without a BOM …) or contains a NUL character, `next-id` prints no id
+  and exits with code 1 (its ids cannot be read reliably): save a file that is not UTF-8 as UTF-8, delete a
+  NUL character (see "No NUL characters" below), then run it again.
+  Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
+- Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
+  `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is
+  notes (a `**Subtasks**:` written after it is not a subtask list). No `## ` headings after `## Tasks`.
+  Close every ```` ``` ```` / `~~~` code block inside the task where it starts (an unclosed block makes
+  the board read-only; a `### TASK-` line inside a code block would otherwise become a separate task).
+- Keep the header / configuration part to the known lines (title, `<!-- … -->` comments, `**Columns**`,
+  `**Categories**`, `**Users**`, `**Priorities**`, `**Tags**`); anything else makes the board read-only.
+- `**Status**:` must be a column **id** from `**Columns**` (the part in parentheses). An unknown
+  value is kept as written and shown in the first column with a warning.
+- Japanese (or any language) is fine for titles, descriptions, notes, tags (`#経理`), categories,
+  users and column display names. The Markdown keys (`**Status**`, `**Priority**`, `## Tasks`, …)
+  are a fixed format: never translate them.
+- Where the real data lives: see `AGENTS.md` (`npm run tasks -- where`). The `kanban.md` /
+  `archive.md` at the repository root are dummy samples.
+- **Encoding: UTF-8 without BOM.** A file in another encoding is opened read-only by the app (it would
+  otherwise be saved back garbled). On Windows, do **not** write the files with Windows PowerShell 5.1
+  `Set-Content`, `Add-Content`, `Out-File` or `>` / `>>` (they write Shift_JIS / UTF-16 by default). Use
+  your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default). `npm run tasks -- check` reports a
+  file that is not UTF-8.
+- **No NUL characters (U+0000).** A file containing one is opened read-only (editors and AI tools take it
+  for a binary file, and NULs are often what a damaged file contains); `npm run tasks -- check` reports
+  the line (`NUL 文字（U+0000…）が N 行目にあります`). Delete the character — saving as UTF-8 does not
+  remove it. A `�` right next to `␀` in that line is the rest of a character the NULs cut off: delete those
+  bytes too (removing only the NUL bytes leaves a broken character, reported next as "not UTF-8").
+  Restore the file from the OneDrive version history if text around it is missing. Until
+  then `next-id` and the app give no new id. The app itself refuses to write one.
+- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` — that makes the board read-only until it
+  is fixed; `2026-1-5` / `20261231` are kept but reported by `npm run tasks -- check` as `⚠ non-iso-date`,
+  and the browser's date fields cannot show them).
+- Upstream's leading-`|` metadata line (` | **Category**: …`) is only read directly under the task header,
+  together with the other metadata lines; in the description a `| **Due**: … |` table row is plain text.
+- An example of the format (a `**Due**:` line, a checklist, a `### …` heading) belongs in a closed
+  ```` ``` ```` code block: lines in a code block are text, never task fields. A `### TASK-` line is a new
+  task even inside a code block — never write one there.
 
 ---
 

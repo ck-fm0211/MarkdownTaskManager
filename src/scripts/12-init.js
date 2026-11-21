@@ -5,7 +5,9 @@
             notificationText.textContent = message;
             notification.className = `notification ${type} show`;
 
-            setTimeout(() => {
+            // Errors are longer and must be readable: keep them 8 s (success: 3 s).
+            clearTimeout(showNotification._timer);
+            showNotification._timer = setTimeout(() => {
                 notification.classList.remove('show');
-            }, 3000);
+            }, type === 'error' ? 8000 : 3000);
         }

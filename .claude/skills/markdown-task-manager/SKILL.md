@@ -49,6 +49,25 @@ What was done.
 
 **Why?** All tasks share one `## Tasks` section, so a stray `##`/`###` heading inside a task can break parsing.
 
+## 🤝 Co-editing rules (this fork)
+
+- Real data lives in the data folder (`npm run tasks -- where`), not in the repository samples.
+- Ask the user to stop editing in the browser before you edit; the app refuses to overwrite
+  external changes (it shows a conflict) but simultaneous writes cannot be prevented.
+- New id: `npm run tasks -- next-id` (unique across kanban.md AND archive.md). Never reuse ids.
+  If it prints no id and exits 1, a file is not UTF-8 (Shift_JIS, UTF-16 with or without a BOM …) or contains a
+  NUL character: save it as UTF-8 / delete the NUL, then run it again.
+- After editing: `npm run tasks -- check` must print `[OK]` (otherwise the app opens the file read-only).
+- Archive = append to `archive.md` first, then remove from `kanban.md`; keep `**Status**:`.
+- Japanese text is fine everywhere except the Markdown keys (`**Status**`, `## Tasks`, …).
+- Save the files as **UTF-8 without BOM**. On Windows do NOT write them with PowerShell 5.1
+  `Set-Content` / `Add-Content` / `Out-File` / `>` (they write Shift_JIS or UTF-16): the app then opens
+  the file read-only. Use your editing tool, or PowerShell 7 (`pwsh`, UTF-8 by default).
+- Never write a NUL character (U+0000): the app opens such a file read-only. If `check` reports
+  `NUL 文字 … N 行目`, delete that character (saving as UTF-8 does not remove it), and a `�` right next
+  to `␀` too (the rest of a character the NULs cut off); until then no new id is given.
+- Dates are `YYYY-MM-DD` only (`2026-11-30`, not `2026/11/30` or `2026-1-5`).
+
 ## 🔄 Workflow
 
 > **V2 — status is a field, not a position.** A task's column is its `**Status**:`
@@ -56,11 +75,12 @@ What was done.
 > `**Status**:` line — never cut/paste the whole block** (~1 line vs 20+).
 
 ### 1. New Request
-1. Read `kanban.md` to get the last task ID
-2. Add the task to the `## Tasks` section with `**Status**: todo` (first column id)
-3. Unique ID (TASK-XXX) auto-incremented
-4. Break down into subtasks if needed
-5. Increment counter in `<!-- Config: Last Task ID: XXX -->`
+1. Get the id: `npm run tasks -- next-id` (max of kanban.md AND archive.md + 1; never reuse an id)
+2. Append the task at the end of the `## Tasks` section with `**Status**: <first column id>` (e.g. `todo`)
+3. Break down into subtasks if needed
+4. Optionally set `<!-- Config: Last Task ID: XXX -->` to the new number (the app and `next-id`
+   also count every id written in both files, so a stale counter is harmless)
+5. Run `npm run tasks -- check` → `[OK]`
 
 ### 2. Start Work
 1. Edit one line: `**Status**: todo` → `**Status**: in-progress`
@@ -198,7 +218,7 @@ grep -n "^\*\*Status\*\*: in-progress" kanban.md | head -1   # next task in a co
 
 ```markdown
 ### TASK-001 | Fix login bug
-
+**Status**: todo
 **Priority**: Critical | **Category**: Backend | **Assigned**: @bob
 **Created**: 2025-01-20 | **Due**: 2025-01-21
 **Tags**: #bug #urgent
@@ -213,7 +233,7 @@ Check Redis, related to yesterday's deployment.
 
 ```markdown
 ### TASK-042 | Notification system
-
+**Status**: done
 **Priority**: High | **Category**: Backend | **Assigned**: @alice
 **Created**: 2025-01-15 | **Started**: 2025-01-18 | **Finished**: 2025-01-22
 **Tags**: #feature
@@ -251,12 +271,12 @@ Real-time notifications with WebSockets.
 
 When using this skill, you must:
 
-1. **Read kanban.md** to understand current state and get last ID
-2. **Create tasks** following strict format
-3. **Update tasks** by moving between sections
+1. **Read kanban.md** to understand the current state (columns = `**Columns**` of the Configuration)
+2. **Create tasks** following the strict format, with an id from `npm run tasks -- next-id`
+3. **Update tasks** by editing their one `**Status**:` line (never move blocks between sections)
 4. **Check off subtasks** progressively
 5. **Document result** in Notes before marking Done
-6. **Increment Last Task ID** in config comment
+6. **Check** with `npm run tasks -- check` after every edit (`[OK]`)
 7. **Never archive** unless explicitly requested
 
 ## 📘 Git Integration
@@ -272,9 +292,9 @@ git checkout -b feature/TASK-042-notifications
 
 ## ⚠️ Critical Points of Attention
 
-1. **Markdown Format**: Strictly respect format (no `##` inside tasks)
-2. **ID Increment**: Always increment `<!-- Config: Last Task ID: XXX -->`
-3. **Columns**: Use exact column names defined in Configuration
+1. **Markdown Format**: Strictly respect format (no `##` inside tasks), UTF-8 without BOM
+2. **IDs**: Always take the id from `npm run tasks -- next-id` (never `Last Task ID + 1` by hand)
+3. **Columns**: `**Status**` holds a column **id** (the part in parentheses in `**Columns**`)
 4. **Archiving**: NEVER archive automatically, only on request
 5. **Documentation**: Always fill `**Notes**:` with Result, Modified files, etc.
 
@@ -306,30 +326,28 @@ Before using the skill, verify the project contains:
 
 ### Reading kanban.md
 
-Always start by reading `kanban.md` to:
-- Get the last task ID from `<!-- Config: Last Task ID: XXX -->`
-- Understand existing columns structure
-- Check current tasks in each column
+Always start by reading `kanban.md` (or the grep overview above) to:
+- Know the columns: `**Columns**: 📝 To Do (todo) | …` → the ids are `todo`, …
+- See the current tasks and their `**Status**:`
 
 ### Creating a New Task
 
-1. Calculate new ID: `last_id + 1`
-2. Format as `TASK-XXX` (3 digits with leading zeros)
-3. Add to "📝 To Do" section
-4. Update `<!-- Config: Last Task ID: XXX -->` comment
-5. Use today's date for `**Created**:`
+1. Get the id: `npm run tasks -- next-id` (e.g. `TASK-043`; 3+ digits)
+2. Append the block at the END of the `## Tasks` section (never create a `## <column>` heading:
+   such a heading makes the file read-only in the app)
+3. First lines: `### TASK-043 | Title`, then `**Status**: <column id>`, then the other fields
+4. Use today's date for `**Created**:` (YYYY-MM-DD)
+5. `npm run tasks -- check` → `[OK]`
 
 ### Moving Tasks Between Columns
 
-When moving a task:
-1. Copy entire task content (from `### TASK-XXX` to blank line before next task)
-2. Paste in target column section
-3. Delete from original location
-4. Update dates accordingly (`**Started**:` or `**Finished**:`)
+Edit ONE line, never the block's position:
+1. `**Status**: todo` → `**Status**: in-progress`
+2. Update dates accordingly (`**Started**:` or `**Finished**:`)
 
 ### Completing Tasks
 
-Before moving to "✅ Done":
+Before setting `**Status**: done`:
 1. Ensure all subtasks are checked `[x]`
 2. Add `**Finished**: YYYY-MM-DD`
 3. Fill in `**Notes**:` section with:
@@ -341,10 +359,10 @@ Before moving to "✅ Done":
 ### Archiving Tasks
 
 Only when user explicitly requests archiving:
-1. Read task from "✅ Done" section in `kanban.md`
-2. Append task to "## ✅ Archives" section in `archive.md`
-3. Add separator `---` between archived tasks
-4. Remove task from `kanban.md`
+1. Copy the whole task block from `kanban.md` and APPEND it to `archive.md` first (keep its
+   `**Status**:` line as it is). If `archive.md` already has that id, compare and ask the user.
+2. Then remove the block from `kanban.md`
+3. `npm run tasks -- check` → `[OK]` (no duplicate id between the two files)
 
 ---
 

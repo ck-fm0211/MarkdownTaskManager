@@ -1,19 +1,3 @@
-        async function autoSave() {
-            if (!kanbanFileHandle) return false;
-            try {
-                const newContent = generateMarkdown();
-                const writable = await kanbanFileHandle.createWritable();
-                await writable.write(newContent);
-                await writable.close();
-                currentKanbanContent = newContent;
-                console.log('Auto-saved');
-                return true;
-            } catch (error) {
-                console.error('Auto-save failed:', error);
-                return false;
-            }
-        }
-
         // Helper function to normalize user identifier (extract @username from @username (Display Name))
         function normalizeUserId(userString) {
             if (!userString) return '';
@@ -94,7 +78,7 @@
 
             // Update priority filter select from config
             const priorities = (config.priorities || []);
-            document.getElementById('filterPrioritySelect').innerHTML = `<option value="">${t('filters.select')}</option>` + priorities.map((p, i) => `<option value="${clean(p)}">${displayPriority(p)}</option>`).join('');
+            document.getElementById('filterPrioritySelect').innerHTML = `<option value="">${t('filters.select')}</option>` + priorities.map((p, i) => `<option value="${escapeHtml(clean(p))}">${escapeHtml(displayPriority(p))}</option>`).join('');
         }
 
         // Filter functions
@@ -172,7 +156,7 @@
 
                 // For priority filters, display with prefix/emoji from config
                 if (f.type === 'priority' && config.priorities) {
-                    const priority = config.priorities.find(p => clean(p) === f.value);
+                    const priority = findPriorityLabel(config.priorities, f.value);
                     if (priority) {
                         displayValue = priority;
                     }
@@ -186,8 +170,8 @@
 
                 return `
                 <span style="background: ${colors[f.type]}; color: white; padding: 0.35rem 0.75rem; border-radius: 16px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 500;">
-                    ${displayPriority(displayValue)}
-                    <button onclick="removeFilter(${idx})" style="background: none; border: none; color: white; cursor: pointer; padding: 0; font-weight: bold; font-size: 1.1rem; line-height: 1;" title="Supprimer ce filtre">✕</button>
+                    ${escapeHtml(displayPriority(displayValue))}
+                    <button onclick="removeFilter(${idx})" style="background: none; border: none; color: white; cursor: pointer; padding: 0; font-weight: bold; font-size: 1.1rem; line-height: 1;" title="${escapeHtml(t('filters.removeFilter'))}" aria-label="${escapeHtml(t('filters.removeFilter'))}">✕</button>
                 </span>
                 `;
             }).join('');
@@ -212,15 +196,9 @@
                 if (!matchesActiveFilters) return false;
             }
 
-            // Check global search term (searches in title, description, and notes)
-            if (globalSearchTerm) {
-                const searchLower = globalSearchTerm.toLowerCase();
-                const matchesSearch =
-                    (task.title && task.title.toLowerCase().includes(searchLower)) ||
-                    (task.description && task.description.toLowerCase().includes(searchLower)) ||
-                    (task.notes && task.notes.toLowerCase().includes(searchLower));
-                if (!matchesSearch) return false;
-            }
+            // Global search: task id (TASK-042, task-42, ＴＡＳＫ－０４２…), title, description, notes,
+            // tags, category, assignees and subtasks — same matcher as the archive search.
+            if (globalSearchTerm && !taskMatchesSearch(task, globalSearchTerm)) return false;
 
             return true;
         }

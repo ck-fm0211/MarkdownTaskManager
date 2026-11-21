@@ -8,7 +8,7 @@ This project uses a Markdown-based task management system.
 
 ## 📚 Complete Documentation
 
-**⚠️ CONSULT**: `AI_WORKFLOW.md` at the project root
+**⚠️ CONSULT**: `AI_WORKFLOW.md` at the project root (and `AGENTS.md` for this fork: folders, build, safe co-editing)
 
 This file contains everything: format, workflow, commands, examples.
 
@@ -30,17 +30,17 @@ This file contains everything: format, workflow, commands, examples.
 ## 🔄 Task Workflow
 
 ### New task
-1. Create in `kanban.md` → "📝 To Do" section
-2. Auto-incremented ID (TASK-XXX)
-3. Strict format required (see AI_WORKFLOW.md)
+1. Id: `npm run tasks -- next-id` (unique across kanban.md and archive.md)
+2. Append the block to the single `## Tasks` section with `**Status**: todo` (a column id)
+3. Strict format required (see AI_WORKFLOW.md), UTF-8 without BOM; then `npm run tasks -- check`
 
 ### In progress
-1. Move → "🚀 In Progress"
+1. Edit one line: `**Status**: todo` → `**Status**: in-progress`
 2. Add `**Started**: YYYY-MM-DD`
 3. Check off subtasks progressively
 
 ### Done
-1. Move → "✅ Done"
+1. Edit one line: `**Status**: in-progress` → `**Status**: done`
 2. Add `**Finished**: YYYY-MM-DD`
 3. Document in `**Notes**:`
 4. **Archive only on user request** (do not archive automatically)

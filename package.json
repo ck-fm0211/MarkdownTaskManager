@@ -1,14 +1,32 @@
 {
   "name": "markdown-task-manager",
-  "version": "2.0.0",
+  "version": "2.0.0-ja.1",
   "private": true,
   "type": "module",
-  "description": "Single-file Markdown Kanban task manager — built from src/ into one self-contained, dependency-free task-manager.html",
+  "description": "Single-file Markdown Kanban task manager — built from src/ into one self-contained, dependency-free task-manager.html (fork: Japanese UI, safe save with external-change detection, deploy/backup tooling)",
   "scripts": {
     "build": "node build.mjs",
-    "build:dev": "node build.mjs --dev"
+    "build:dev": "node build.mjs --dev",
+    "build:check": "node build.mjs --check",
+    "test": "node scripts/run-tests.mjs all",
+    "test:unit": "node scripts/run-tests.mjs unit",
+    "test:e2e": "node scripts/run-tests.mjs e2e",
+    "check": "npm run build && npm test",
+    "config:check": "node scripts/config-check.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:dry": "node scripts/deploy.mjs --dry-run",
+    "build-deploy": "npm run build && node scripts/deploy.mjs",
+    "backup": "node scripts/backup.mjs",
+    "backup:dry": "node scripts/backup.mjs --dry-run",
+    "release": "node scripts/backup.mjs --release",
+    "restore:verify": "node scripts/verify-restore.mjs",
+    "tasks": "node scripts/tasks.mjs"
   },
   "devDependencies": {
-    "html-minifier-terser": "^7.2.0"
+    "html-minifier-terser": "^7.2.0",
+    "playwright-core": "1.63.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

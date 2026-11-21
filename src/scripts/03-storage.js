@@ -12,63 +12,53 @@
             });
         }
 
+        // Write the whole recent-projects list in its own readwrite transaction.
+        async function putRecentProjects(list) {
+            const db = await openDB();
+            const transaction = db.transaction(STORE_NAME, 'readwrite');
+            transaction.objectStore(STORE_NAME).put(list, PROJECTS_KEY);
+            await new Promise((resolve, reject) => {
+                transaction.oncomplete = resolve;
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            });
+        }
+
+        // Add / update a project in the recent list (most recent first). Returns true on success.
+        // All awaits that are not IndexedDB requests (isSameEntry, prompt) happen BEFORE the write
+        // transaction is opened: an IndexedDB transaction auto-commits as soon as the code awaits
+        // something else, and a later put() would fail with TransactionInactiveError.
         async function saveDirectoryHandle(handle, customName = null) {
             try {
-                const db = await openDB();
-                const transaction = db.transaction(STORE_NAME, 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-
-                // Get existing projects
-                const getRequest = store.get(PROJECTS_KEY);
-                const projects = await new Promise((resolve, reject) => {
-                    getRequest.onsuccess = () => resolve(getRequest.result || []);
-                    getRequest.onerror = () => reject(getRequest.error);
-                });
-
-                // Get project name (directory name)
+                const projects = await loadRecentProjects();
                 const projectName = handle.name;
 
-                // Check if project already exists
-                const existingIndex = projects.findIndex(p => p.name === projectName);
-                const isNewProject = existingIndex < 0;
+                // Identity = the same folder (isSameEntry), not just the same folder NAME: two
+                // different folders called "data" must stay two projects.
+                const existingIndex = await findProjectIndex(projects, handle);
+                const existing = existingIndex >= 0 ? projects[existingIndex] : null;
 
-                // Ask for custom name for new projects if not provided
+                // Ask for a custom name for new projects if not provided
                 let finalCustomName = customName;
-                if (isNewProject && !customName) {
+                if (!existing && customName === null) {
                     finalCustomName = prompt(t('prompt.projectName', {name: projectName})) || '';
                 }
 
                 const projectData = {
                     handle: handle,
                     name: projectName,
-                    customName: finalCustomName || (existingIndex >= 0 ? projects[existingIndex].customName : ''),
+                    customName: finalCustomName !== null ? finalCustomName : (existing ? existing.customName : ''),
                     lastAccessed: Date.now()
                 };
-
-                if (existingIndex >= 0) {
-                    // Update existing project (keep custom name if not changing)
-                    projectData.customName = customName !== null ? customName : projects[existingIndex].customName;
-                    projects[existingIndex] = projectData;
-                } else {
-                    // Add new project at the beginning
-                    projects.unshift(projectData);
-                }
-
-                // Keep only MAX_RECENT_PROJECTS
-                const recentProjects = projects.slice(0, MAX_RECENT_PROJECTS);
-
-                // Save updated list
-                store.put(recentProjects, PROJECTS_KEY);
-
-                await new Promise((resolve, reject) => {
-                    transaction.oncomplete = resolve;
-                    transaction.onerror = () => reject(transaction.error);
-                });
+                const rest = projects.filter((p, i) => i !== existingIndex);
+                await putRecentProjects([projectData, ...rest].slice(0, MAX_RECENT_PROJECTS));
 
                 console.log('Project saved to recent list:', projectData.customName || projectName);
-                updateProjectSelector();
+                await updateProjectSelector();
+                return true;
             } catch (error) {
                 console.error('Failed to save directory handle:', error);
+                return false;
             }
         }
 
@@ -100,6 +90,24 @@
             }
         }
 
+        async function findProjectIndex(projects, handle) {
+            for (let i = 0; i < projects.length; i++) {
+                const h = projects[i].handle;
+                try {
+                    if (h && typeof h.isSameEntry === 'function') {
+                        if (await h.isSameEntry(handle)) return i;
+                        continue;
+                    }
+                } catch (e) { /* fall back to the name */ }
+                if (projects[i].name === handle.name) return i;
+            }
+            return -1;
+        }
+
+        function localeForDates() {
+            return t('locale.dates') || 'en-US';
+        }
+
         async function verifyPermission(handle) {
             const options = { mode: 'readwrite' };
             if ((await handle.queryPermission(options)) === 'granted') {
@@ -122,8 +130,8 @@
                 selector.style.display = 'block';
 
                 // Only mark as selected if kanban is actually loaded
-                const isKanbanLoaded = document.getElementById('kanbanView').style.display !== 'none';
-                const currentProject = (isKanbanLoaded && directoryHandle) ? directoryHandle.name : '';
+                const isKanbanLoaded = document.getElementById('kanbanView').style.display !== 'none' && !!session;
+                const currentIdx = (isKanbanLoaded && directoryHandle) ? await findProjectIndex(projects, directoryHandle) : -1;
 
                 // Show/hide rename and delete buttons
                 if (isKanbanLoaded) {
@@ -141,11 +149,11 @@
                 }
 
                 html += projects.map((p, idx) => {
-                    const selected = (isKanbanLoaded && p.name === currentProject) ? 'selected' : '';
-                    const date = new Date(p.lastAccessed).toLocaleDateString('fr-FR');
+                    const selected = idx === currentIdx ? 'selected' : '';
+                    const date = new Date(p.lastAccessed).toLocaleDateString(localeForDates());
                     const displayName = p.customName || p.name;
                     const details = p.customName ? ` (📁 ${p.name})` : '';
-                    return `<option value="${idx}" ${selected}>${displayName}${details} - ${date}</option>`;
+                    return `<option value="${idx}" ${selected}>${escapeHtml(displayName + details)} - ${escapeHtml(date)}</option>`;
                 }).join('');
 
                 selector.innerHTML = html;
@@ -156,38 +164,44 @@
             }
         }
 
-        // Switch to a different project
+        // Every request to show another project (selector, folder picker, startup restore) gets a
+        // number. A request that is overtaken by a newer one while it waits (permission prompt,
+        // folder picker, IndexedDB) is dropped: it must never open its folder later and replace a
+        // project that was opened — and maybe edited — in the meantime.
+        let projectRequestSeq = 0;
+        function newProjectRequest() {
+            const n = ++projectRequestSeq;
+            return () => n !== projectRequestSeq; // → true when overtaken
+        }
+
+        // Switch to a different project. Unsaved edits → confirmation; running saves finish first
+        // (against the OLD project's files); then a brand-new session is opened for the new folder.
+        // The confirmation is asked about the project that is open RIGHT BEFORE the switch (after
+        // the permission prompt), not about the one that was open when the request started.
         async function switchProject(projectIndex) {
+            const overtaken = newProjectRequest();
             try {
                 const projects = await loadRecentProjects();
-                if (projectIndex >= 0 && projectIndex < projects.length) {
-                    const project = projects[projectIndex];
-
-                    // Verify permission
-                    if (await verifyPermission(project.handle)) {
-                        directoryHandle = project.handle;
-
-                        // Update last accessed time and save
-                        await saveDirectoryHandle(directoryHandle);
-
-                        // Load the project
-                        await loadKanbanFile();
-
-                        document.getElementById('welcomeScreen').style.display = 'none';
-                        document.getElementById('kanbanView').style.display = 'block';
-                        document.getElementById('filterBar').style.display = 'block';
-                        document.getElementById('newTaskBtn').style.display = 'inline-flex';
-                        document.getElementById('archiveBtn').style.display = 'inline-flex';
-                        document.getElementById('manageColsBtn').style.display = 'inline-flex';
-
-                        // Update project selector now that kanban is visible
-                        await updateProjectSelector();
-
-                        showNotification(t('notif.projectLoaded', {name: project.customName || project.name}), 'success');
-                    } else {
-                        showNotification(t('notif.permissionDenied'), 'error');
-                    }
+                if (overtaken()) return;
+                if (projectIndex < 0 || projectIndex >= projects.length) return;
+                const project = projects[projectIndex];
+                const permitted = await verifyPermission(project.handle);
+                if (overtaken()) return;
+                if (!permitted) {
+                    showNotification(t('notif.permissionDenied'), 'error');
+                    await updateProjectSelector();
+                    return;
                 }
+                const leave = await confirmLeaveCurrent();
+                if (overtaken()) return;
+                if (!leave) { await updateProjectSelector(); return; }
+                const ok = await openProject(project.handle, { skipLeaveCheck: true });
+                if (ok) {
+                    const listed = await saveDirectoryHandle(project.handle);
+                    if (!listed) console.warn('recent-projects list not updated');
+                    notifyProjectOpened(t('notif.projectLoaded', {name: project.customName || project.name}), listed ? [] : [t('notif.historyError')]);
+                }
+                await updateProjectSelector();
             } catch (error) {
                 console.error('Error switching project:', error);
                 showNotification(t('notif.projectError'), 'error');
@@ -200,15 +214,19 @@
 
             try {
                 const projects = await loadRecentProjects();
-                const currentProject = projects.find(p => p.name === directoryHandle.name);
+                const currentIdx = await findProjectIndex(projects, directoryHandle);
+                const currentProject = currentIdx >= 0 ? projects[currentIdx] : null;
 
                 if (currentProject) {
                     const currentName = currentProject.customName || currentProject.name;
                     const newName = prompt(t('prompt.renameProject'), currentName);
 
                     if (newName !== null && newName.trim() !== currentName) {
-                        await saveDirectoryHandle(directoryHandle, newName.trim());
-                        showNotification(t('notif.projectRenamed'), 'success');
+                        if (await saveDirectoryHandle(directoryHandle, newName.trim())) {
+                            showNotification(t('notif.projectRenamed'), 'success');
+                        } else {
+                            showNotification(t('notif.renameError'), 'error');
+                        }
                     }
                 }
             } catch (error) {
@@ -223,37 +241,29 @@
 
             try {
                 const projects = await loadRecentProjects();
-                const currentProject = projects.find(p => p.name === directoryHandle.name);
+                const currentIdx = await findProjectIndex(projects, directoryHandle);
+                const currentProject = currentIdx >= 0 ? projects[currentIdx] : null;
 
                 if (currentProject) {
                     const displayName = currentProject.customName || currentProject.name;
 
+                    if (!(await confirmLeaveCurrent())) return;
                     if (confirm(t('confirm.deleteProject', {name: displayName}))) {
                         // Remove from projects list
-                        const updatedProjects = projects.filter(p => p.name !== directoryHandle.name);
+                        const updatedProjects = projects.filter(p => p !== currentProject);
 
                         // Save updated list to IndexedDB
-                        const db = await openDB();
-                        const transaction = db.transaction(STORE_NAME, 'readwrite');
-                        const store = transaction.objectStore(STORE_NAME);
-                        store.put(updatedProjects, PROJECTS_KEY);
+                        await putRecentProjects(updatedProjects);
 
-                        await new Promise((resolve, reject) => {
-                            transaction.oncomplete = resolve;
-                            transaction.onerror = () => reject(transaction.error);
-                        });
-
-                        // Clear current project and show welcome screen
+                        // Clear current project (new generation → late async work is ignored)
+                        projectGen++;
+                        session = null;
                         directoryHandle = null;
-                        kanbanFileHandle = null;
                         tasks = [];
-
-                        document.getElementById('kanbanView').style.display = 'none';
-                        document.getElementById('filterBar').style.display = 'none';
-                        document.getElementById('newTaskBtn').style.display = 'none';
-                        document.getElementById('archiveBtn').style.display = 'none';
-                        document.getElementById('manageColsBtn').style.display = 'none';
-                        document.getElementById('welcomeScreen').style.display = 'block';
+                        archivedTasks = [];
+                        closeAllModals();
+                        showBoardViews(false);
+                        renderSyncBanner();
 
                         await updateProjectSelector();
                         showNotification(t('notif.projectDeleted'), 'success');
@@ -267,29 +277,30 @@
 
         // Try to restore previous directory on page load
         async function tryRestorePreviousDirectory() {
+            // The request number is taken BEFORE the first await: a folder the user starts to choose
+            // while the recent-projects list is still loading is a newer request and wins (taken
+            // after the list, the startup restore would overtake the user's choice and drop it).
+            const overtaken = newProjectRequest();
             const savedHandle = await loadDirectoryHandle();
+            if (overtaken() || session) { await updateProjectSelector(); return !!session; }
             console.log('Attempting to restore previous directory:', savedHandle ? savedHandle.name : 'none');
 
             if (savedHandle) {
                 try {
                     // Verify we still have permission
                     console.log('Verifying permissions...');
-                    if (await verifyPermission(savedHandle)) {
-                        console.log('Permission granted, loading kanban file...');
-                        directoryHandle = savedHandle;
-                        await loadKanbanFile();
-
-                        document.getElementById('welcomeScreen').style.display = 'none';
-                        document.getElementById('kanbanView').style.display = 'block';
-                        document.getElementById('filterBar').style.display = 'block';
-                        document.getElementById('newTaskBtn').style.display = 'inline-flex';
-                        document.getElementById('archiveBtn').style.display = 'inline-flex';
-                        document.getElementById('manageColsBtn').style.display = 'inline-flex';
-
-                        showNotification(t('notif.projectRestored'), 'success');
+                    const permitted = await verifyPermission(savedHandle);
+                    // A folder chosen by the user while the startup permission check was pending wins.
+                    if (overtaken() || session) { await updateProjectSelector(); return !!session; }
+                    if (permitted) {
+                        // Always a fresh read from disk: edits an AI made while the browser was
+                        // closed are simply what gets loaded.
+                        const ok = await openProject(savedHandle, { skipLeaveCheck: true });
                         await updateProjectSelector(); // Show project selector
-                        console.log('Project restored successfully');
-                        return true;
+                        if (ok) {
+                            notifyProjectOpened(t('notif.projectRestored'));
+                            return true;
+                        }
                     } else {
                         console.log('Permission denied or cancelled');
                     }
@@ -324,21 +335,20 @@
                     options.startIn = directoryHandle;
                 }
 
-                directoryHandle = await window.showDirectoryPicker(options);
-                await saveDirectoryHandle(directoryHandle); // Save for next time
-                await loadKanbanFile();
-
-                document.getElementById('welcomeScreen').style.display = 'none';
-                document.getElementById('kanbanView').style.display = 'block';
-                document.getElementById('filterBar').style.display = 'block';
-                document.getElementById('newTaskBtn').style.display = 'inline-flex';
-                document.getElementById('archiveBtn').style.display = 'inline-flex';
-                document.getElementById('manageColsBtn').style.display = 'inline-flex';
+                const overtaken = newProjectRequest();
+                const picked = await window.showDirectoryPicker({ ...options, mode: 'readwrite' });
+                if (overtaken()) return;
+                const leave = await confirmLeaveCurrent();
+                if (overtaken() || !leave) return;
+                const ok = await openProject(picked, { skipLeaveCheck: true });
+                // Save for next time. A failure is shown WITH the "loaded" message (shown on its own, it
+                // was replaced by that message at once).
+                const listed = ok ? await saveDirectoryHandle(picked) : true;
 
                 // Update project selector now that kanban is visible
                 await updateProjectSelector();
 
-                showNotification(t('notif.folderLoaded'), 'success');
+                if (ok) notifyProjectOpened(t('notif.folderLoaded'), listed ? [] : [t('notif.historyError')]);
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     showNotification(t('notif.folderError'), 'error');
@@ -347,4 +357,4 @@
             }
         });
 
-        // Load kanban.md file
+

@@ -1,6 +1,12 @@
 # 📋 Markdown Task Manager
 
-> **[🇫🇷 Version française / French version](./readmeFR.md)**
+> **[🇫🇷 Version française / French version](./readmeFR.md)** · **[🇯🇵 日本語ガイド](./docs/ja/README.md)**
+
+> **Fork notice** — This is a fork of [ioniks/MarkdownTaskManager](https://github.com/ioniks/MarkdownTaskManager)
+> based on V2.0 (`f173f0d`). It adds a Japanese UI, a save layer that never silently overwrites
+> changes made by AI assistants/editors (content-based conflict detection), safer project switching
+> and archiving, parser fixes, task-id search, and deploy / source-backup tooling for offline use from
+> OneDrive. See [CHANGELOG.md](./CHANGELOG.md), [AGENTS.md](./AGENTS.md) and [docs/ja/](./docs/ja/README.md).
 
 **Kanban task manager based on local Markdown files**
 
@@ -42,7 +48,7 @@ Markdown Task Manager is a **standalone web application** contained in a single 
 - ✅ **No server**: Works entirely in the browser
 - ✅ **Multi-project**: Manage multiple projects with history
 - ✅ **Dark mode & responsive**: Light/dark theme, mobile-ready with touch drag & drop
-- ✅ **Multilingual**: English, French, German and Simplified Chinese
+- ✅ **Multilingual**: English, French, German, Simplified Chinese and Japanese
 
 ---
 

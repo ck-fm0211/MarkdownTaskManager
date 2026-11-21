@@ -11,7 +11,9 @@
             // Use very flexible regex to capture all code block formats
             const codeBlocks = [];
             html = html.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (match, language, code) => {
-                const lang = (language || '').trim() || 'text';
+                // The language label is user content too (it is taken BEFORE the global escaping
+                // below), so it must be escaped here — otherwise "```<img onerror=…>" runs script.
+                const lang = escapeHtml((language || '').trim() || 'text');
                 const placeholder = `\n__CODE_BLOCK_${codeBlocks.length}__\n`;
 
                 // Remove trailing newline if present
@@ -46,9 +48,20 @@
 
             // Convert links [text](url) — validate URL scheme to block javascript:/data: (XSS)
             html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
-                const u = url.trim();
-                const safe = /^(https?:|mailto:|#|\/)/i.test(u) ? u : '#';
-                return `<a href="${escapeHtml(safe)}" target="_blank" style="color: var(--primary); text-decoration: underline;">${text}</a>`;
+                // The text was HTML-escaped above; undo that for the URL (it is escaped once below),
+                // otherwise "?a=1&b=2" would become "&amp;amp;" and break query strings / mailto.
+                const u = url.trim().replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+                // http(s), mailto, in-page anchors and site-relative paths only. "//host/..." is
+                // refused: from a file:// page it would become a network (UNC) path.
+                // Browsers treat "\" like "/" and drop tabs/newlines inside URLs, so "/\host" or
+                // "/<TAB>/host" would become "//host": any whitespace, control character or
+                // backslash makes the link unsafe.
+                let safe = !/[\u0000-\u0020\u007f\\]/.test(u) && /^(https?:|mailto:|#|\/(?!\/))/i.test(u) ? u : '#';
+                // A path must stay on the page's own host (defence in depth against "//host" tricks).
+                if (safe.startsWith('/')) {
+                    try { if (new URL(safe, location.href).host !== location.host) safe = '#'; } catch (e) { safe = '#'; }
+                }
+                return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline;">${text}</a>`;
             });
 
             // Convert bullet lists and paragraphs
