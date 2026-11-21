@@ -44,6 +44,7 @@ const parsed = (text, label, parse) => {
 };
 const k = parsed(kanbanText, 'kanban.md', F.parseKanbanContent);
 const a = parsed(archiveText, 'archive.md', F.parseArchiveContent);
+const withNul = [['kanban.md', k], ['archive.md', a]].filter(([, r]) => r && r.problems.some((p) => p.code === 'nul-char')).map(([label]) => label);
 const active = k ? k.tasks : [];
 const archived = a ? a.tasks : [];
 
@@ -73,6 +74,12 @@ if (cmd === 'where') {
     console.error(`[停止] ${notUtf8.join(' / ')} が UTF-8 ではないため、使用済みの ID を確実に読めません。新しい ID は出しません。UTF-8（BOM なし）で保存し直してから実行してください（確認: npm run tasks -- check）。`);
     process.exit(1);
   }
+  // Same rule as the browser: a NUL is often what a damaged file leaves (a run of NULs over the end
+  // of the file, where the newest ids are), so no id is handed out until it is repaired.
+  if (withNul.length) {
+    console.error(`[停止] ${withNul.join(' / ')} に NUL 文字があります（ファイルが壊れている可能性があり、使用済みの ID を確実に読めません）。新しい ID は出しません。NUL 文字を削除し、周りの文章が欠けていれば OneDrive のバージョン履歴から戻してから実行してください（確認: npm run tasks -- check）。`);
+    process.exit(1);
+  }
   if ((k && k.problems.length) || (a && a.problems.length)) {
     console.error('[注意] 解析できない内容があります（npm run tasks -- check）。ID はファイル内のすべての「### TASK-<番号>」行を考慮して決めています。');
   }
@@ -93,7 +100,7 @@ if (cmd === 'where') {
   let bad = 0;
   let toFix = 0;
   console.log(`dataDir: ${dir}`);
-  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS・BOM のない UTF-16 など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
+  for (const f of notUtf8) { console.log(`  ✗ ${f}: UTF-8 ではありません（Shift_JIS、UTF-16（BOM の有無を問わず）など）。UTF-8（BOM なし）で保存し直してください。`); bad++; }
   if (!k) { console.log('  kanban.md がありません'); bad++; } else {
     console.log(`kanban.md : ${active.length} タスク（V2=${k.formatV2}）`);
     printProblems('kanban.md', k.problems); bad += k.problems.length;
@@ -116,6 +123,7 @@ if (cmd === 'where') {
   if (k && k.config.lastTaskId < maxId) console.log(`  ⚠ <!-- Config: Last Task ID: ${k.config.lastTaskId} --> が最大 ID ${maxId} より小さい（ブラウザーは自動で回避します）`);
   const rawMax = Math.max(F.maxIdInText(kanbanText || ''), F.maxIdInText(archiveText || ''));
   if (notUtf8.length) console.log('次の ID: （UTF-8 でないファイルがあるため決められません）');
+  else if (withNul.length) console.log('次の ID: （NUL 文字のあるファイルがあるため決められません）');
   else console.log(`次の ID: ${F.formatTaskId(F.nextTaskNumber(Math.max(k ? k.config.lastTaskId : 0, rawMax), active, archived))}`);
   if (bad) console.log(`\n[NG] ${bad} 件の問題。ブラウザーはこのファイルを読み取り専用で開きます（保存すると失われる・化ける内容や NUL 文字があるため）。`);
   if (toFix) console.log(`${bad ? '' : '\n'}[NG] 重複した ID が ${toFix} 件あります。ブラウザーは警告を表示して通常どおり開きますが、ドラッグ移動などが別のタスクに作用するおそれがあるため、片方を修正してください。`);

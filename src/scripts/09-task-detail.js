@@ -233,6 +233,14 @@
                 renderSyncBanner();
                 return false;
             }
+            // A NUL in archive.md (nul-char) is often what a damaged file leaves: a run of NULs may have
+            // replaced the end of the file, i.e. the most recently archived (highest) ids. They are not
+            // known until the file is repaired (the NUL deleted, or restored from the version history).
+            if ((s.blocked.archive || []).some(p => p.code === 'nul-char')) {
+                showNotification(t('notif.archiveNulForId'), 'error');
+                renderSyncBanner();
+                return false;
+            }
             return true;
         }
 

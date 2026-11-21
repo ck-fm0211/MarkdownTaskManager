@@ -731,10 +731,20 @@ describe('review round 8 (ops)', () => {
     assert.match(c.out, new RegExp(`${line}: before␀after`));
     assert.doesNotMatch(c.out, /UTF-8 ではありません/);
     assert.match(c.out, /\[NG\]/);
-    assert.match(c.out, /次の ID: TASK-004/);
+    assert.match(c.out, /次の ID: （NUL 文字のあるファイルがあるため決められません）/);
     const n = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir]);
-    assert.equal(n.code, 0, n.out);
-    assert.match(n.out, /TASK-004/);
+    assert.equal(n.code, 1, n.out);
+    assert.match(n.out, /\[停止\] kanban\.md に NUL 文字があります/);
+    assert.doesNotMatch(n.out, /TASK-00\d/);
+    // A damaged archive.md whose end was overwritten with NULs: the ids that were there are unknown.
+    const dir2 = tmp();
+    writeFileSync(join(dir2, 'kanban.md'), readFileSync(join(ROOT, 'examples', 'kanban.md')));
+    const arch = readFileSync(join(ROOT, 'examples', 'archive.md'));
+    writeFileSync(join(dir2, 'archive.md'), Buffer.concat([arch.subarray(0, arch.length >> 1), Buffer.alloc(arch.length - (arch.length >> 1))]));
+    const n2 = node(ROOT, 'scripts/tasks.mjs', ['next-id', '--dir', dir2]);
+    assert.equal(n2.code, 1, n2.out);
+    assert.match(n2.out, /archive\.md に NUL 文字があります/);
+    assert.doesNotMatch(n2.out, /TASK-\d/);
   });
 
   test('guard: tasks check / next-id: UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', () => {

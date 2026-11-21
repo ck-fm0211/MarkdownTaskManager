@@ -892,6 +892,28 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
     assert.equal(await readFile(page, 'p', 'archive.md'), archive(''));
   });
 
+  it('no new task while archive.md has a NUL (e.g. its end overwritten by a crash); existing tasks stay editable (round 8: review 中-1)', async ({ page }) => {
+    const kanban = board(task(3, 'C', '', 'done'), { lastId: 3 });
+    // The archived TASK-004 / TASK-005 are lost under the NULs: their ids are unknown.
+    const damaged = archive(task(2, 'B', '', 'done')) + '\u0000'.repeat(200);
+    await createDir(page, 'p', { 'kanban.md': kanban, 'archive.md': damaged });
+    await openFolder(page, 'p');
+    assert.deepEqual(await page.evaluate(() => (session.blocked.archive || []).map((p) => p.code)), ['nul-char']);
+    await page.click('#newTaskBtn');
+    assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), false, 'the new-task form does not open');
+    assert.match(await notificationText(page), /archive\.md contains NUL characters/);
+    assert.equal((await page.evaluate(() => archiveTask(tasks[0]))).ok, false, 'no archive operation');
+    await waitIdle(page);
+    assert.equal(await readFile(page, 'p', 'archive.md'), damaged, 'archive.md unchanged');
+    assert.equal(await readFile(page, 'p', 'kanban.md'), kanban);
+    // Editing an existing task still works.
+    await page.click('.task-edit-btn');
+    await page.fill('#taskTitle', 'C2');
+    await page.click('#taskFormSubmitBtn');
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /### TASK-003 \| C2\n/);
+  });
+
   it('a NUL in valid UTF-8 opens read-only as "nul-char" with its line; UTF-16BE without a BOM is still not UTF-8 (round 8: review 中-1)', async ({ page }) => {
     const text = board(task(1, 'A', '\nbefore\u0000after'), { lastId: 1 });
     const lineNo = text.split('\n').findIndex((l) => l.includes('\u0000')) + 1;
