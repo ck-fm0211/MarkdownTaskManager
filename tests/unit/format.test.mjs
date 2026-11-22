@@ -187,6 +187,125 @@ test('inline Notes text is kept', () => {
   assert.deepEqual(plain(a.problems), []);
 });
 
+test('Estimate and Worklog round-trip without changing their meaning', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | 実装
+**Status**: todo
+**Estimate**: 8h
+
+説明
+
+**Subtasks**:
+- [ ] 実装する
+
+**Worklog**:
+- 2026-11-20 | 2.5h | 調査
+- 2026-11-21 | 3h | 実装
+
+**Notes**:
+完了条件を確認
+`;
+  const a = F.parseKanbanContent(md);
+  assert.deepEqual(plain(a.problems), []);
+  assert.equal(a.tasks[0].estimate, '8h');
+  assert.deepEqual(plain(a.tasks[0].worklog), [
+    { date: '2026-11-20', hours: 2.5, memo: '調査' },
+    { date: '2026-11-21', hours: 3, memo: '実装' }
+  ]);
+
+  const generated = F.generateKanbanContent(a.config, a.tasks);
+  const b = F.parseKanbanContent(generated);
+  assert.deepEqual(plain(b.tasks), plain(a.tasks));
+  assert.ok(generated.indexOf('**Subtasks**:') < generated.indexOf('**Worklog**:'));
+  assert.ok(generated.indexOf('**Worklog**:') < generated.indexOf('**Notes**:'));
+});
+
+test('Worklog-looking text inside Notes is not parsed as worklog', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | メモ
+**Status**: todo
+
+**Notes**:
+実績の記録例:
+**Worklog**:
+- 2026-11-20 | 2.5h | これはメモ
+`;
+  const a = F.parseKanbanContent(md);
+  assert.deepEqual(plain(a.problems), []);
+  assert.deepEqual(plain(a.tasks[0].worklog), []);
+  assert.match(a.tasks[0].notes, /\*\*Worklog\*\*:/);
+  assert.match(a.tasks[0].notes, /これはメモ/);
+});
+
+test('empty Estimate and Worklog fields are omitted when serialized', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | 空欄
+**Status**: todo
+**Estimate**:
+
+**Worklog**:
+`;
+  const a = F.parseKanbanContent(md);
+  assert.equal(a.tasks[0].estimate, '');
+  assert.deepEqual(plain(a.tasks[0].worklog), []);
+  const generated = F.generateKanbanContent(a.config, a.tasks);
+  assert.doesNotMatch(generated, /\*\*Estimate\*\*\s*:/);
+  assert.doesNotMatch(generated, /\*\*Worklog\*\*\s*:/);
+  assert.deepEqual(plain(F.parseKanbanContent(generated).problems), []);
+});
+
+test('Worklog entries may omit the memo', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | メモ省略
+**Status**: todo
+
+**Worklog**:
+- 2026-11-20 | 2.5h
+`;
+  const a = F.parseKanbanContent(md);
+  assert.deepEqual(plain(a.tasks[0].worklog), [{ date: '2026-11-20', hours: 2.5, memo: '' }]);
+});
+
 test('task id search: full id, case, width, number', () => {
   const task = { id: 'TASK-042', title: 'x', description: '', notes: '', tags: [], assignees: [], subtasks: [] };
   for (const q of ['TASK-042', 'task-042', 'Task-042', 'ＴＡＳＫ－０４２', 'TASK-42', '#42', '042', ' TASK-042 ']) {

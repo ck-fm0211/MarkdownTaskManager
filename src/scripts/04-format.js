@@ -19,17 +19,19 @@
         const TASK_HEADER_RE = /^###\s+TASK-(\d+)\s*\|\s*(.+?)\s*$/;
         // Anything that LOOKS like a task header (used to detect malformed headers).
         const LOOSE_TASK_HEADER_RE = /^###\s+TASK-/;
-        const META_KEYS = ['Status', 'Priority', 'Category', 'Assigned', 'Created', 'Started', 'Due', 'Finished', 'Tags'];
+        const META_KEYS = ['Status', 'Priority', 'Category', 'Assigned', 'Created', 'Started', 'Due', 'Finished', 'Tags', 'Estimate'];
         // ":" may also be typed as a full-width "：" (Japanese IME); both are accepted.
-        const META_LINE_RE = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：]/;
+        const META_LINE_RE = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate)\*\*\s*[:：]/;
         // Upstream V2.0 wrote " | **Category**: …" when a task had no priority (and " | **Assigned**: …"
         // with neither priority nor category). That form is read ONLY in the task's leading metadata
         // lines (see metaLineMask) and never when the line ends with "|": a Markdown table row such
         // as "| **Due**: 2026-01-01 |" in the description is description text, not the task's field.
-        const PIPED_META_LINE_RE = /^\s*\|\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags)\*\*\s*[:：](?!.*\|\s*$)/;
+        const PIPED_META_LINE_RE = /^\s*\|\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate)\*\*\s*[:：](?!.*\|\s*$)/;
         const META_SEG_RE = /^\s*\*\*([A-Za-z]+)\*\*\s*[:：]\s*(.*?)\s*$/;
-        const SECTION_STOP_RE = /^\s*\*\*(Subtasks|Notes|Links|Review|Dependencies)\*\*/i;
+        const SECTION_STOP_RE = /^\s*\*\*(Subtasks|Worklog|Notes|Links|Review|Dependencies)\*\*/i;
         const NOTES_RE = /^\s*\*\*Notes\*\*\s*[:：]/i;
+        const WORKLOG_SECTION_RE = /^\s*\*\*Worklog\*\*\s*[:：]/i;
+        const WORKLOG_LINE_RE = /^\s*-\s+(\d{4}-\d{2}-\d{2})\s*\|\s*(\d+(?:\.\d+)?)h(?:\s*\|\s*(.*?))?\s*$/;
         // Tags: "#" (or full-width "＃") followed by anything except whitespace, "#", "," and "、".
         // Unicode-safe (Japanese tags). Stored with an ASCII "#".
         const TAG_RE = /[#＃][^\s#＃,、，]+/g;
@@ -394,7 +396,7 @@
             const structural = (i, re) => !fenced[i] && re.test(lines[i]);
             const findLine = (re) => lines.findIndex((l, i) => structural(i, re));
 
-            // "Head" = lines before the first section (Subtasks/Notes/Links/Review/Dependencies).
+            // "Head" = lines before the first section (Subtasks/Worklog/Notes/Links/Review/Dependencies).
             // Metadata is only read from the head, so a "**Created**:" inside notes is not mistaken
             // for the task's own field.
             let headEnd = findLine(SECTION_STOP_RE);
@@ -415,8 +417,10 @@
                 started: '',
                 due: '',
                 completed: '',
+                estimate: '',
                 description: '',
                 subtasks: [],
+                worklog: [],
                 notes: '',
                 extra: '' // verbatim passthrough for **Links** / **Review** / **Dependencies**
             };
@@ -453,6 +457,7 @@
                         case 'Due': task.due = (v.match(/^[\d-]+/) || [''])[0]; break;
                         case 'Finished': task.completed = (v.match(/^[\d-]+/) || [''])[0]; break;
                         case 'Tags': task.tags = (v.match(TAG_RE) || []).map(normTag); break;
+                        case 'Estimate': task.estimate = v; break;
                     }
                 });
             });
@@ -488,6 +493,21 @@
                 }
             }
 
+            // Worklog: only collect entries inside the **Worklog** section (until the next
+            // "**Field**:"), just like Subtasks. A worklog section written after Notes remains
+            // part of the notes because it is outside beforeNotes.
+            let inWorklog = false;
+            for (let i = 0; i < beforeNotes.length; i++) {
+                const line = beforeNotes[i];
+                if (fenced[i]) { if (inWorklog) inWorklog = false; continue; }
+                if (WORKLOG_SECTION_RE.test(line)) { inWorklog = true; continue; }
+                if (inWorklog && /^\s*\*\*[^*\n]+\*\*\s*[:：]/.test(line)) inWorklog = false;
+                if (inWorklog) {
+                    const m = line.match(WORKLOG_LINE_RE);
+                    if (m) task.worklog.push({ date: m[1], hours: Number(m[2]), memo: m[3] ?? '' });
+                }
+            }
+
             // Notes: everything after **Notes**: to the end of the block (text on the same line
             // as "**Notes**:" is kept too).
             if (notesIdx >= 0) {
@@ -500,7 +520,7 @@
 
             // Unsupported sections preserved verbatim: **Links** / **Review** / **Dependencies**.
             const extraStart = /^\s*\*\*(Links|Review|Dependencies)\*\*\s*:/i;
-            const extraStop = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Subtasks)\*\*/i;
+            const extraStop = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate|Subtasks|Worklog)\*\*/i;
             const extraLines = [];
             let capturing = false;
             for (let i = 0; i < beforeNotes.length; i++) {
@@ -633,9 +653,14 @@
                 const cb = raw.match(CHECKBOX_RE);
                 if (cb) { tokens.push('cb:' + cb[1] + (cb[2] === ' ' ? ' ' : 'x') + ':' + cb[3].trim()); return; }
                 let t = line;
+                const worklog = t.match(WORKLOG_LINE_RE);
+                if (worklog) {
+                    tokens.push(`worklog:${worklog[1]}:${Number(worklog[2])}:${worklog[3] ?? ''}`);
+                    return;
+                }
                 // Bare section headers carry no data of their own (an empty "**Notes**:" or
-                // "**Subtasks**:" is legitimately not written back).
-                if (/^\*\*(Subtasks|Notes)\*\*\s*[:：]?$/i.test(t)) return;
+                // "**Subtasks**:" or "**Worklog**:" is legitimately not written back).
+                if (/^\*\*(Subtasks|Worklog|Notes)\*\*\s*[:：]?$/i.test(t)) return;
                 if (NOTES_RE.test(t)) t = t.replace(/^\*\*Notes\*\*\s*[:：]\s*/i, '');
                 tokens.push('line:' + t.replace(/\s+/g, ' '));
             });
@@ -965,10 +990,18 @@
             if (task.completed) dates.push(`**Finished**: ${task.completed}`);
             if (dates.length) md += dates.join(' | ') + '\n';
             if (task.tags && task.tags.length) md += `**Tags**: ${task.tags.join(' ')}\n`;
+            if (task.estimate) md += `**Estimate**: ${task.estimate}\n`;
             if (task.description) md += `\n${task.description}\n`;
             if (task.subtasks && task.subtasks.length) {
                 md += `\n**Subtasks**:\n`;
                 task.subtasks.forEach(st => { md += `${st.indent || ''}- [${st.completed ? 'x' : ' '}] ${st.text}\n`; });
+            }
+            if (task.worklog && task.worklog.length) {
+                md += `\n**Worklog**:\n`;
+                task.worklog.forEach(log => {
+                    const memo = log.memo ? ` | ${log.memo}` : '';
+                    md += `- ${log.date} | ${log.hours}h${memo}\n`;
+                });
             }
             if (task.extra) md += `\n${task.extra}\n`;
             if (task.notes) md += `\n**Notes**:\n${task.notes}\n`;
