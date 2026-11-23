@@ -6,6 +6,8 @@
 
 ## 📚 Complete Documentation
 
+- [AI スキルの SSOT](docs/ai/skills/): `task-history-explorer`（チケットの履歴・背景を調べ、チャットに報告）。
+
 **⚠️ READ IMMEDIATELY**: `AI_WORKFLOW.md` (and `AGENTS.md` for this fork: folders, build, safe co-editing)
 
 This file contains everything: format, workflow, commands, examples.
