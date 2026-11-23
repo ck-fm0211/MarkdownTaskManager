@@ -89,3 +89,4 @@
 | スキル | SSOT | ラッパ | 目的 |
 |---|---|---|---|
 | `task-history-explorer` | [docs/ai/skills/task-history-explorer.md](docs/ai/skills/task-history-explorer.md) | [.claude/skills/task-history-explorer/SKILL.md](.claude/skills/task-history-explorer/SKILL.md) | チケットの履歴・背景を調べてチャットに報告し、明示的な依頼時だけレポートを保存する。 |
+| `adr-from-tasks` | [docs/ai/skills/adr-from-tasks.md](docs/ai/skills/adr-from-tasks.md) | [.claude/skills/adr-from-tasks/SKILL.md](.claude/skills/adr-from-tasks/SKILL.md) | 選択チケットから MADR 4.0.0 の ADR を作成し、既定で元チケットの Notes に参照を追記する。 |
