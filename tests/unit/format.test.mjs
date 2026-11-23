@@ -252,6 +252,29 @@ test('colon-less Worklog heading in an extra section is preserved', () => {
   assert.deepEqual(plain(F.taskWriteProblems(task)), []);
 });
 
+test('colon-less Subtasks after Review round-trips as exactly one subtask', () => {
+  const body = '**Status**: todo\n\n**Review**:\n**Subtasks**\n- [ ] 確認\n\n';
+  const board = `# B\n<!-- Format: v2 -->\n\n## Tasks\n\n### TASK-001 | Review\n${body}`;
+  const parsed = F.parseKanbanContent(board);
+  assert.equal(parsed.tasks.length, 1);
+  const task = parsed.tasks[0];
+  assert.deepEqual(plain(task.subtasks), [{ completed: false, text: '確認' }]);
+  assert.equal(task.extra, '**Review**:');
+  assert.deepEqual(plain(parsed.problems), []);
+  assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+
+  // Serialization normalizes the heading and section order, without duplicating the item.
+  const serialized = F.serializeTask(task);
+  assert.equal(serialized, '### TASK-001 | Review\n**Status**: todo\n\n**Subtasks**:\n- [ ] 確認\n\n**Review**:\n\n');
+  const generated = F.generateKanbanContent(parsed.config, parsed.tasks);
+  const again = F.parseKanbanContent(generated);
+  assert.deepEqual(plain(again.tasks), plain(parsed.tasks));
+  assert.deepEqual(plain(again.problems), []);
+  assert.deepEqual(plain(F.taskWriteProblems(again.tasks[0])), []);
+  assert.equal(F.serializeTask(again.tasks[0]), serialized);
+  assert.equal(F.generateKanbanContent(again.config, again.tasks), generated);
+});
+
 for (const section of ['Review', 'Links', 'Dependencies']) {
   test(`colon-less Estimate in ${section} round-trips with its following reason`, () => {
     const extra = `**${section}**:\n**Estimate** は暫定です\n要件が未確定のためです。`;

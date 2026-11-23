@@ -527,7 +527,7 @@
 
             // Unsupported sections preserved verbatim: **Links** / **Review** / **Dependencies**.
             const extraStart = /^\s*\*\*(Links|Review|Dependencies)\*\*\s*:/i;
-            const extraStop = /^\s*\*\*(?:(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate|Subtasks)\*\*\s*[:：]|Worklog\*\*\s*[:：])/i;
+            const extraStop = /^\s*\*\*(?:(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate)\*\*\s*[:：]|Subtasks\*\*|Worklog\*\*\s*[:：])/i;
             const extraLines = [];
             let capturing = false;
             for (let i = 0; i < beforeNotes.length; i++) {
