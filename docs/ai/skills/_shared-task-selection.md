@@ -42,21 +42,28 @@
 呼び出し元から category / tag / TASK-ID / 期間と対象フォルダーを受け取り、条件を短く提示する。
 条件がない、または日付の意味が曖昧な場合は必要な点を質問する。
 
-### 2. grep で候補を生成する
+### 2. 共有パーサーで候補を生成する（grep は任意の事前絞り込み）
 
-必要な索引とメタデータ行だけを読み、一致行の直前にあるタスク見出しへ対応付ける。
+候補の列挙は、アプリと同じ形式を読む共有パーサー（`src/scripts/04-format.js`）を正とする。
+各候補はリポジトリで `npm run tasks -- show TASK-NNN` を実行して解析済みのタスクを確認する
+（別フォルダーなら `--dir <folder>` を付ける）。広い条件で検索する場合は、対象の
+`kanban.md` / `archive.md` の両方を読み、共有パーサーで全タスクを解析して条件を照合する。
+grep は低コストな任意の事前絞り込みに限り、使用した場合も候補集合を共有パーサーで
+必ず確認・補完してから使う。grep で得た ID だけを `show` しても、漏れた候補は回復できない。
+
+以下の grep 例では必要な索引とメタデータ行だけを読み、一致行の直前にあるタスク見出しへ対応付ける。
 以下は固定の例示値。実際の値に置き換え、正規表現の特殊文字はエスケープする。
 
 ```bash
 # 必要なときだけボード索引を作る（既存の省トークン手順）
-grep -nE "^### TASK-|^\*\*Status\*\*:" kanban.md
-grep -nE "^### TASK-|^\*\*Status\*\*:" archive.md
+grep -nE '^### TASK-|(^|\|)[[:space:]]*\*\*Status\*\*[[:space:]]*[:：]' kanban.md
+grep -nE '^### TASK-|(^|\|)[[:space:]]*\*\*Status\*\*[[:space:]]*[:：]' archive.md
 
 # category: 他のメタデータと同じ行にもある
-grep -nHE '^### TASK-|\*\*Category\*\*[[:space:]]*[:：][[:space:]]*Backend([[:space:]]*\||[[:space:]]*$)' kanban.md archive.md
+grep -nHE '^### TASK-|(^|\|)[[:space:]]*\*\*Category\*\*[[:space:]]*[:：][[:space:]]*Backend([[:space:]]*\||[[:space:]]*$)' kanban.md archive.md
 
 # tag: タグ行を絞る（# / ＃ がタグの開始。空白・,・、・，・次の # / ＃・行末が境界）
-grep -nHE '^### TASK-|^[[:space:]]*\*\*Tags\*\*[[:space:]]*[:：].*[#＃]bug([[:space:],、，#＃]|$)' kanban.md archive.md
+grep -nHE '^### TASK-|(^|\|)[[:space:]]*\*\*Tags\*\*[[:space:]]*[:：].*[#＃]bug([#＃[:space:],、，]|$)' kanban.md archive.md
 
 # TASK-ID: 位置を特定してそのタスクだけ読む
 grep -n "^### TASK-042 " kanban.md
@@ -65,16 +72,15 @@ grep -n "^### TASK-042 " archive.md
 sed -n '/^### TASK-042 /,/^### TASK-/p' archive.md
 
 # 期間: 見出しと日付行を抽出してから from / to と比較する
-grep -nHE '^### TASK-|\*\*(Created|Started|Finished)\*\*:|^\*\*Worklog\*\*:|^[[:space:]]*- [0-9]{4}-[0-9]{2}-[0-9]{2} ' kanban.md archive.md
+grep -nHE '^### TASK-|(^|\|)[[:space:]]*\*\*(Created|Started|Due|Finished)\*\*[[:space:]]*[:：]|^[[:space:]]*\*\*Worklog\*\*[[:space:]]*[:：]|^[[:space:]]*-[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*\|[[:space:]]*[0-9]+(\.[0-9]+)?h' kanban.md archive.md
 ```
 
 `sed` の範囲には次のタスクの見出しも含まれるため、その見出しは対象から除く。
-grep は候補抽出であり、説明・コード例・設定の一致をタスクの属性と誤認しないよう、
-候補のブロックで実メタデータを照合する。期間は各日付の値を取り出して範囲と比較し、
+grep の一致は仮の候補であり、説明・コード例・設定の一致をタスクの属性と誤認しないよう、
+共有パーサーで実メタデータを照合する。期間は各日付の値を取り出して範囲と比較し、
 `**Worklog**` を使う場合は同セクション内の記録日だけを数える。
-生の grep ではパーサーが受け付ける区切り文字を取りこぼすことがあるため、grep だけを信用しない。
-判断に迷う場合は共有パーサーで候補を確認する（例: `npm run tasks -- show TASK-NNN` は
-アプリと同じ解析でタスクを読む。別フォルダーなら `--dir <folder>` を付ける）。
+生の grep はパーサーが受け付ける区切り文字やパイプ区切り・空白省略形を取りこぼすことがある。
+候補集合は確定前に必ず共有パーサーで確認・補完する。
 
 Git の例（該当リポジトリで実行。`<path>` は実際の関連ファイルのパスに置き換える）:
 
