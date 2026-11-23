@@ -180,6 +180,70 @@ describe('task detail estimate and worklog', () => {
     assert.equal(await page.locator('#taskDetailWorklog input[type="text"]').evaluate(el => el === document.activeElement), true);
   });
 
+  it('offers draft exports without retry after a kanban read failure', async ({ page }) => {
+    await setup(page);
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    const original = await readFile(page, 'p', 'kanban.md');
+    const memo = 'Rescue this uncommitted memo after a read failure';
+    await page.fill('#taskDetailWorklog input[type="text"]', memo);
+    assert.equal(await page.evaluate(() => isDirty()), false);
+    assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+    await setFault(page, 'p', 'kanban.md', { readFail: true });
+    await page.evaluate(() => checkExternalChanges());
+    assert.deepEqual(await page.evaluate(() => session.lastError), { which: 'kanban', kind: 'read-failed' });
+    assert.equal(await syncState(page), 'error');
+    assert.equal(await page.isVisible('#syncBanner'), true);
+    for (const selector of ['#syncDownloadBtn', '#syncCopyBtn', '#syncReloadBtn']) {
+      assert.equal(await page.isVisible(selector), true, `${selector} is available`);
+    }
+    assert.equal(await page.isVisible('#syncRetryBtn'), false, 'a draft alone cannot be retried');
+    assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(memo));
+    assert.equal(await page.evaluate(() => tasks[0].worklog[0].memo), '');
+    assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+  });
+
+  for (const saveInFlight of [false, true]) {
+    it(`refreshes the form draft indicator on input and cancel${saveInFlight ? ' after a save finishes' : ''}`, async ({ page }) => {
+      await setup(page);
+      await page.evaluate(() => closeModal());
+      let writeHeld = false;
+      try {
+        if (saveInFlight) {
+          await page.evaluate(() => window.__mockFS.holdWrite('p', 'kanban.md'));
+          writeHeld = true;
+          await page.evaluate(() => toggleSubtask('TASK-001', 0));
+          await page.waitForFunction(() => window.__mockFS.isWriteHeld('p', 'kanban.md'));
+        }
+        // The saving banner can intercept clicks while the write is held.
+        await page.evaluate(() => openTaskModal(tasks[0]));
+        await page.waitForSelector('#newTaskModal.active');
+        if (!saveInFlight) assert.equal(await syncState(page), 'saved');
+        await page.fill('#taskTitle', 'Uncommitted form title');
+        if (!saveInFlight) assert.equal(await syncState(page), 'dirty');
+        if (saveInFlight) {
+          await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.md'));
+          writeHeld = false;
+          await waitIdle(page);
+          await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state !== 'saving');
+        }
+        assert.equal(await page.evaluate(() => isDirty()), false);
+        assert.equal(await syncState(page), 'dirty');
+        await page.evaluate(() => closeTaskModal());
+        assert.equal(await page.isVisible('#newTaskModal'), false);
+        assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+        assert.equal(await syncState(page), 'saved');
+        assert.equal(await page.evaluate(() => tasks[0].title), 'Time tracking');
+        assert.doesNotMatch(await readFile(page, 'p', 'kanban.md'), /Uncommitted form title/);
+      } finally {
+        if (writeHeld) {
+          await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.md'));
+          await waitIdle(page);
+        }
+      }
+    });
+  }
+
   it('keeps an uncommitted memo unsaved when committing the estimate', async ({ page }) => {
     await setup(page);
     await page.click('#taskDetailWorklog > button');

@@ -805,7 +805,8 @@ describe('review round 8: characters that cannot be written (NUL)', () => {
       assert.equal(await readFile(page, 'p', 'kanban.md'), start(), `${field}: kanban.md unchanged`);
       assert.equal(await page.evaluate(() => document.getElementById('newTaskModal').classList.contains('active')), true, `${field}: the form stays open`);
       assert.deepEqual(await stateOf(page), { conflict: null, lastError: null, blocked: null }, field);
-      assert.equal(await syncState(page), 'saved', field);
+      // The refused NUL stays in the open form as unsaved input; nothing was written (asserted above).
+      assert.equal(await syncState(page), 'dirty', field);
       await page.evaluate(() => closeTaskModal());
     }
     // A new task: refused too, and no id is used up.

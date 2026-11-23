@@ -448,9 +448,11 @@
                 text = t('sync.error.' + s.lastError.kind, { file: fileLabel(s.lastError.which) });
                 // 'refused': the same content would be refused again, so no "Retry"; the help says what to do.
                 const refused = s.lastError.kind === 'refused';
-                const help = !isDirty(s) ? '' : refused ? t('sync.refusedHelp') : t('sync.errorUnsavedHelp');
+                const exportable = hasUnsavedWork(s);
+                const canRetry = isDirty(s) && !refused;
+                const help = !exportable ? '' : refused ? t('sync.refusedHelp') : t('sync.errorUnsavedHelp');
                 detail = [problemSummary(s.lastError.problems), help].filter(Boolean).join('\n\n');
-                show = !isDirty(s) ? ['reload'] : refused ? ['download', 'copy', 'reload'] : ['retry', 'download', 'copy', 'reload'];
+                show = exportable ? (canRetry ? ['retry', 'download', 'copy', 'reload'] : ['download', 'copy', 'reload']) : ['reload'];
             } else if (s && s.blocked.archive) {
                 kind = 'warning';
                 text = t('sync.blockedArchive');

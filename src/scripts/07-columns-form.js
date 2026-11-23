@@ -98,6 +98,8 @@
         }
 
         // Task edit/create modal
+        document.getElementById('newTaskForm').addEventListener('input', updateSyncIndicator);
+
         function openTaskModal(task = null, defaultColumnId = null) {
             if (!guardWritable()) return;
             if (!task && !canCreateNewTask()) return;
@@ -313,6 +315,7 @@
             isEditMode = false;
             editingTask = null;
             taskFormSnapshot = null;
+            updateSyncIndicator();
         }
 
         // × / Cancel: typed input is only thrown away after confirmation.
