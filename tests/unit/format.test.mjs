@@ -252,6 +252,23 @@ test('colon-less Worklog heading in an extra section is preserved', () => {
   assert.deepEqual(plain(F.taskWriteProblems(task)), []);
 });
 
+for (const section of ['Review', 'Links', 'Dependencies']) {
+  test(`colon-less Estimate in ${section} round-trips with its following reason`, () => {
+    const extra = `**${section}**:\n**Estimate** は暫定です\n要件が未確定のためです。`;
+    const body = `**Status**: todo\n**Estimate**: 8h\n\n${extra}\n\n`;
+    const md = `### TASK-001 | ${section}\n${body}`;
+    const task = F.parseTask('TASK-001', section, body, 'todo');
+    assert.equal(task.estimate, '8h');
+    assert.equal(task.extra, extra);
+    assert.equal(F.serializeTask(task), md);
+    assert.deepEqual(plain(F.findLostLines(body, task)), []);
+    assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+    const again = F.parseTask('TASK-001', section, F.serializeTask(task).slice(md.indexOf('\n') + 1), 'todo');
+    assert.equal(again.extra, extra);
+    assert.equal(F.serializeTask(again), md);
+  });
+}
+
 test('Worklog section accepts ASCII and full-width colons', () => {
   for (const colon of [':', '：']) {
     const body = `**Status**: todo\n\n**Worklog** ${colon}\n- 2026-02-28 | 1.5h\n`;
