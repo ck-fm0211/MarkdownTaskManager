@@ -203,6 +203,80 @@ describe('task detail estimate and worklog', () => {
     assert.equal(await readFile(page, 'p', 'kanban.md'), original);
   });
 
+  for (const draft of ['detail memo', 'form title']) {
+    it(`refreshes error banner exports when typing a ${draft} after a read failure`, async ({ page }) => {
+      await setup(page);
+      if (draft === 'detail memo') {
+        await page.evaluate(() => addWorklog('TASK-001'));
+        await waitIdle(page);
+      } else {
+        await page.evaluate(() => {
+          closeModal();
+          openTaskModal(tasks[0]);
+        });
+        await page.waitForSelector('#newTaskModal.active');
+      }
+      const original = await readFile(page, 'p', 'kanban.md');
+      await setFault(page, 'p', 'kanban.md', { readFail: true });
+      await page.evaluate(() => checkExternalChanges());
+      await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'error');
+      assert.deepEqual(await page.evaluate(() => session.lastError), { which: 'kanban', kind: 'read-failed' });
+      assert.equal(await page.isVisible('#syncReloadBtn'), true);
+      for (const selector of ['#syncDownloadBtn', '#syncCopyBtn', '#syncRetryBtn']) {
+        assert.equal(await page.isVisible(selector), false, `${selector} starts hidden`);
+      }
+
+      const selector = draft === 'detail memo' ? '#taskDetailWorklog input[type="text"]' : '#taskTitle';
+      const text = `Rescue this uncommitted ${draft}`;
+      await page.fill(selector, text);
+      await page.waitForSelector('#syncDownloadBtn:visible');
+      await page.waitForSelector('#syncCopyBtn:visible');
+      assert.equal(await page.isVisible('#syncReloadBtn'), true);
+      assert.equal(await page.isVisible('#syncRetryBtn'), false, 'a draft alone cannot be retried');
+      assert.equal(await page.evaluate(() => isDirty()), false);
+      assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(text));
+      assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+
+      // Reverting or closing the draft must remove its export buttons again.
+      if (draft === 'detail memo') await page.fill(selector, '');
+      else await page.evaluate(() => closeTaskModal());
+      await page.waitForSelector('#syncDownloadBtn', { state: 'hidden' });
+      await page.waitForSelector('#syncCopyBtn', { state: 'hidden' });
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+    });
+  }
+
+  it('refreshes the form draft indicator after subtask mutations and reversions', async ({ page }) => {
+    await setup(page);
+    await page.evaluate(() => {
+      closeModal();
+      openTaskModal(tasks[0]);
+    });
+    await page.waitForSelector('#newTaskModal.active');
+    const original = await readFile(page, 'p', 'kanban.md');
+    const checkbox = '#formSubtasksList input[type="checkbox"]';
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'saved');
+    // Real checkbox clicks exercise input before change updates formSubtasks.
+    await page.check(checkbox);
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'dirty');
+    await page.uncheck(checkbox);
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'saved');
+    await page.click('#formSubtasksList button');
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'dirty');
+    assert.equal(await page.locator('#formSubtasksList li').count(), 0);
+
+    // Adding the deleted subtask back restores the opened task's state.
+    await page.fill('#formSubtaskInput', 'First step');
+    await page.press('#formSubtaskInput', 'Enter');
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'saved');
+    await page.fill('#formSubtaskInput', 'Another step');
+    await page.press('#formSubtaskInput', 'Enter');
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'dirty');
+    await page.evaluate(() => closeTaskModal());
+    await page.waitForFunction(() => document.getElementById('syncStatus').dataset.state === 'saved');
+    assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+  });
+
   for (const saveInFlight of [false, true]) {
     it(`refreshes the form draft indicator on input and cancel${saveInFlight ? ' after a save finishes' : ''}`, async ({ page }) => {
       await setup(page);

@@ -386,7 +386,7 @@
 
         function refreshDetailDraft() {
             updateWorklogTotal(detailDraft);
-            updateSyncIndicator();
+            refreshSyncUi();
         }
 
         function inputEstimate(taskId) {

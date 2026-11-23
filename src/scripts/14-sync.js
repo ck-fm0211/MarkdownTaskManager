@@ -393,6 +393,11 @@
 
         // ----- Status indicator & banner -----
 
+        function refreshSyncUi() {
+            if (session && session.lastError) renderSyncBanner();
+            else updateSyncIndicator();
+        }
+
         function updateSyncIndicator() {
             const el = document.getElementById('syncStatus');
             if (!el) return;

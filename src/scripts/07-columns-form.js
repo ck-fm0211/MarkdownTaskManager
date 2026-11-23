@@ -98,7 +98,7 @@
         }
 
         // Task edit/create modal
-        document.getElementById('newTaskForm').addEventListener('input', updateSyncIndicator);
+        document.getElementById('newTaskForm').addEventListener('input', refreshSyncUi);
 
         function openTaskModal(task = null, defaultColumnId = null) {
             if (!guardWritable()) return;
@@ -315,7 +315,7 @@
             isEditMode = false;
             editingTask = null;
             taskFormSnapshot = null;
-            updateSyncIndicator();
+            refreshSyncUi();
         }
 
         // × / Cancel: typed input is only thrown away after confirmation.
@@ -334,6 +334,7 @@
                     <button type="button" onclick="deleteFormSubtask(${idx})" title="${escapeHtml(t('tooltip.delete'))}" aria-label="${escapeHtml(t('tooltip.delete'))}" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1rem;">🗑️</button>
                 </li>
             `).join('');
+            refreshSyncUi();
         }
 
         // Enter in the subtask field adds the subtask (as in the task detail view). Without this, Enter
