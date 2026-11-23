@@ -46,12 +46,86 @@ async function change(page, selector, value) {
 }
 
 describe('task detail estimate and worklog', () => {
+  it('keeps an uncommitted memo in the unsaved board without writing to disk', async ({ page }) => {
+    await setup(page);
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    const original = await readFile(page, 'p', 'kanban.md');
+    assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+    const memo = 'Still typing without blur';
+    await page.fill('#taskDetailWorklog input[type="text"]', memo);
+    assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+    assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(memo));
+    assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+    assert.equal(await page.locator('#taskDetailWorklog input[type="text"]').evaluate(el => el === document.activeElement), true);
+  });
+
+  it('keeps a memo after Tab during a conflict', async ({ page }) => {
+    await setup(page);
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    const original = await readFile(page, 'p', 'kanban.md');
+    await page.evaluate(() => {
+      session.conflict = { which: 'kanban', kind: 'conflict' };
+      renderSyncBanner();
+    });
+    const memo = 'Keep this conflicting edit';
+    await page.fill('#taskDetailWorklog input[type="text"]', memo);
+    await page.press('#taskDetailWorklog input[type="text"]', 'Tab');
+    await waitIdle(page);
+    assert.equal(await page.inputValue('#taskDetailWorklog input[type="text"]'), memo);
+    assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+    assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(memo));
+    assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+  });
+
+  it('commits the estimate and adds a row with one click', async ({ page }) => {
+    await setup(page);
+    const original = await readFile(page, 'p', 'kanban.md');
+    await page.fill('#taskDetailEstimate', '8h');
+    assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+    assert.match(await page.evaluate(() => unsavedKanbanText()), /\*\*Estimate\*\*: 8h/);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    assert.equal(await page.locator('#taskDetailWorklog li').count(), 1);
+    const written = await readFile(page, 'p', 'kanban.md');
+    assert.match(written, /\*\*Estimate\*\*: 8h\n/);
+    assert.ok(written.includes(`**Worklog**:\n- ${await page.evaluate(() => localDateString())} | 0h`));
+  });
+
+  it('keeps focus on the memo when committing hours by clicking it', async ({ page }) => {
+    await setup(page);
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    await page.fill('#taskDetailWorklog input[type="number"]', '2.5');
+    assert.match(await page.textContent('#taskDetailWorklogTotal'), /: 2\.5h$/);
+    await page.click('#taskDetailWorklog input[type="text"]');
+    assert.equal(await page.locator('#taskDetailWorklog input[type="text"]').evaluate(el => el === document.activeElement), true);
+    await waitIdle(page);
+    assert.match(await readFile(page, 'p', 'kanban.md'), /\| 2\.5h/);
+  });
+
+  it('adds a row with the local date near midnight in JST', async ({ page }) => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setTimezoneOverride', { timezoneId: 'Asia/Tokyo' });
+    await page.clock.setFixedTime(new Date('2026-11-30T15:30:00Z'));
+    await setup(page);
+    const today = await page.evaluate(() => localDateString());
+    assert.equal(today, '2026-12-01');
+    assert.notEqual(today, await page.evaluate(() => new Date().toISOString().slice(0, 10)));
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    assert.equal(await page.inputValue('#taskDetailWorklog input[type="date"]'), today);
+    assert.ok((await readFile(page, 'p', 'kanban.md')).includes(`- ${today} | 0h`));
+  });
+
   it('adds, edits, totals, saves, reloads and deletes worklog rows without losing estimate or notes', async ({ page }) => {
     await setup(page);
     await change(page, '#taskDetailEstimate', '8h');
     await page.click('#taskDetailWorklog > button');
     await waitIdle(page);
-    assert.equal(await page.inputValue('#taskDetailWorklog input[type="date"]'), new Date().toISOString().slice(0, 10));
+    assert.equal(await page.inputValue('#taskDetailWorklog input[type="date"]'), await page.evaluate(() => localDateString()));
     assert.equal(await page.inputValue('#taskDetailWorklog input[type="number"]'), '0');
     await change(page, '#taskDetailWorklog input[type="date"]', '2026-11-23');
     await change(page, '#taskDetailWorklog input[type="number"]', '7.5');
@@ -112,13 +186,18 @@ describe('task detail estimate and worklog', () => {
       assert.equal(await page.inputValue('#taskDetailWorklog input[type="text"]'), '');
       assert.equal(await readFile(page, 'p', 'kanban.md'), original);
     }
-    const alertCount = dialogs.seen.length;
-    await page.evaluate(() => {
-      document.getElementById('taskDetailEstimate').value = '8h | **Status**: done';
-      setEstimate('TASK-001');
-    });
+    // Exercise rejection after oninput has already changed the in-memory value.
+    let alertCount = dialogs.seen.length;
+    await change(page, '#taskDetailWorklog input[type="number"]', '-1');
+    assert.equal(dialogs.seen.length, alertCount + 1);
+    assert.deepEqual(await page.evaluate(() => tasks[0].worklog), originalWorklog);
+    assert.equal(await page.inputValue('#taskDetailWorklog input[type="number"]'), '0');
+    assert.match(await page.textContent('#taskDetailWorklogTotal'), /: 0h$/);
+    alertCount = dialogs.seen.length;
+    await change(page, '#taskDetailEstimate', '8h | **Status**: done');
     assert.equal(dialogs.seen.length, alertCount + 1);
     assert.equal(await page.inputValue('#taskDetailEstimate'), '8h');
+    assert.equal(await page.evaluate(() => tasks[0].estimate), '8h');
     assert.equal(await readFile(page, 'p', 'kanban.md'), original);
   });
 
@@ -131,7 +210,7 @@ describe('task detail estimate and worklog', () => {
     await openFolder(page, 'p');
     const original = await readFile(page, 'p', 'kanban.md');
     await page.click('#archiveBtn');
-    await page.evaluate(() => showTaskDetail(archivedTasks[0]));
+    await page.click('#archiveModal.active .archive-card');
     assert.equal(await page.locator('#taskDetailEstimate, #taskDetailWorklog input, #taskDetailWorklog button').count(), 0);
     assert.ok((await page.textContent('#modalBody')).includes('8h'));
     assert.ok((await page.textContent('#taskDetailWorklog')).includes('<review> & "notes"'));
