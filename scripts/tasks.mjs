@@ -175,6 +175,10 @@ if (cmd === 'where') {
     console.error(`[停止] 対象フォルダー ${visible(dir)} に必須の kanban.md が見つかりません。`);
     process.exit(1);
   }
+  if (kanbanText !== null && kanbanText.trim() === '') {
+    console.error(`[停止] 対象フォルダー ${visible(dir)} の kanban.md が空です。ファイルが破損している可能性があるため、集計できません。`);
+    process.exit(1);
+  }
   const dups = F.findDuplicateIds(active, archived);
   if (dups.length) {
     console.error(`[停止] 重複した ID: ${dups.join(', ')}。アーカイブ処理の中断が原因の可能性があります。集計前に重複を解消してください。`);

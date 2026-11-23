@@ -137,6 +137,21 @@ describe('tasks worklog', () => {
     }
   });
 
+  for (const [label, content] of [['zero-byte', ''], ['whitespace-only', ' \t\r\n\n ']]) {
+    test(`${label} kanban stops aggregation even when archive has worklog`, (t) => {
+      const dir = fixture(t);
+      writeFileSync(join(dir, 'kanban.md'), content);
+      const before = snapshot(dir);
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--csv', '--dir', dir]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.stderr, /kanban\.md.*空/);
+      assert.ok(r.stderr.includes(dir), r.stderr);
+      assert.equal(r.out, r.stderr); // No CSV rows on stdout.
+      assert.doesNotMatch(r.out, /TOTAL/);
+      assert.deepEqual(snapshot(dir), before);
+    });
+  }
+
   test('invalid dates, missing values and unknown axes exit 2; help describes estimate filtering', (t) => {
     const dir = fixture(t);
     for (const args of [['--from', '2026-1-01'], ['--to', 'yesterday'], ['--from'], ['--by', 'other']]) {
