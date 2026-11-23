@@ -69,7 +69,7 @@
                         }
                         skippedDestination = true; // already archived identically (earlier partial run)
                     } else {
-                        const next = [...archivedTasks, { ...task, subtasks: task.subtasks.map(st => ({ ...st })) }];
+                        const next = [...archivedTasks, { ...task, subtasks: task.subtasks.map(st => ({ ...st })), worklog: (task.worklog || []).map(log => ({ ...log })) }];
                         try {
                             await writeFileChecked(s, 'archive', archiveContentFor(next));
                         } catch (e) {
@@ -132,7 +132,7 @@
                     } catch (e) { handleSyncError(s, e); return { ok: false, reason: e.kind }; }
 
                     // Keep the original column; fall back to the first column if it no longer exists.
-                    const restored = { ...task, subtasks: task.subtasks.map(st => ({ ...st })) };
+                    const restored = { ...task, subtasks: task.subtasks.map(st => ({ ...st })), worklog: (task.worklog || []).map(log => ({ ...log })) };
                     delete restored.statusUnknown;
                     if (!config.columns.find(col => col.id === restored.status)) {
                         restored.status = config.columns[0]?.id || 'todo';

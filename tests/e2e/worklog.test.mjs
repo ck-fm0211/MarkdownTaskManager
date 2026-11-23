@@ -1,7 +1,7 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  launchBrowser, newPage, createDir, openFolder, waitIdle, readFile, board, archive, task,
+  launchBrowser, newPage, createDir, openFolder, waitIdle, readFile, setFault, syncState, board, archive, task,
 } from './helpers.mjs';
 
 let browser = null;
@@ -46,6 +46,126 @@ async function change(page, selector, value) {
 }
 
 describe('task detail estimate and worklog', () => {
+  for (const [label, selector, invalid, reverted] of [
+    ['estimate with a pipe', '#taskDetailEstimate', '8h | 概算', '8h'],
+    ['empty worklog hours', '#taskDetailWorklog input[type="number"]', '', '2'],
+  ]) {
+    it(`keeps ${label} out of an unrelated queued save and rejects its commit`, async ({ page, dialogs }) => {
+      await setup(page);
+      await change(page, '#taskDetailEstimate', '8h');
+      await page.click('#taskDetailWorklog > button');
+      await waitIdle(page);
+      await change(page, '#taskDetailWorklog input[type="number"]', '2');
+      const committed = await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog }));
+      // Hold the first save at close, then queue a second one. The second save must
+      // serialize tasks AFTER oninput, rather than reuse content prepared before typing.
+      await page.evaluate(() => {
+        window.__mockFS.holdWrite('p', 'kanban.md');
+        toggleSubtask('TASK-001', 0);
+      });
+      await page.waitForFunction(() => window.__mockFS.isWriteHeld('p', 'kanban.md'));
+      await page.evaluate(() => toggleSubtask('TASK-001', 0));
+      const seq = await page.evaluate(() => session.editSeq);
+      await page.fill(selector, invalid);
+      assert.equal(await page.evaluate(() => session.editSeq), seq, 'input does not mark the committed board dirty');
+      assert.deepEqual(await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog })), committed);
+      assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+      if (invalid) assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(invalid));
+      await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.md'));
+      await waitIdle(page);
+      const written = await readFile(page, 'p', 'kanban.md');
+      assert.doesNotMatch(written, /8h \| 概算|NaNh/);
+      assert.match(written, /\*\*Estimate\*\*: 8h\n/);
+      assert.match(written, /\| 2h/);
+      assert.equal(await page.evaluate(() => isDirty()), false);
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+      assert.equal(await syncState(page), 'dirty', 'pending input must not be labelled saved');
+      const writes = await page.evaluate(() => window.__mockFS.writeLog.length);
+      const alerts = dialogs.seen.length;
+      await page.dispatchEvent(selector, 'change');
+      await waitIdle(page);
+      assert.equal(dialogs.seen.length, alerts + 1);
+      assert.equal(await page.inputValue(selector), reverted);
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+      assert.equal(await syncState(page), 'saved');
+      assert.equal(await page.evaluate(() => window.__mockFS.writeLog.length), writes, 'invalid commit must not persist');
+      assert.equal(await readFile(page, 'p', 'kanban.md'), written);
+    });
+  }
+
+  it('clears unsaved state when estimate or hours are reverted before change', async ({ page }) => {
+    await setup(page);
+    await change(page, '#taskDetailEstimate', '8h');
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    await change(page, '#taskDetailWorklog input[type="number"]', '2');
+    const original = await readFile(page, 'p', 'kanban.md');
+    for (const [selector, altered, originalValue] of [
+      ['#taskDetailEstimate', '88h', '8h'],
+      ['#taskDetailWorklog input[type="number"]', '22', '2'],
+      ['#taskDetailWorklog input[type="number"]', '', '2'],
+    ]) {
+      // Moving focus can fire the previous field's change; settle that before
+      // testing an input-only round trip in this field.
+      await page.focus(selector);
+      await waitIdle(page);
+      const seq = await page.evaluate(() => session.editSeq);
+      await page.fill(selector, altered);
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+      assert.equal(await syncState(page), 'dirty');
+      await page.fill(selector, originalValue);
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+      assert.equal(await syncState(page), 'saved');
+      assert.equal(await page.evaluate(() => session.editSeq), seq);
+      assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+    }
+    assert.match(await page.textContent('#taskDetailWorklogTotal'), /: 2h$/);
+  });
+
+  for (const operation of ['archive', 'restore']) {
+    it(`isolates worklog after an interrupted ${operation}`, async ({ page }) => {
+      await setup(page);
+      await page.click('#taskDetailWorklog > button');
+      await waitIdle(page);
+      await change(page, '#taskDetailWorklog input[type="number"]', '2');
+      await page.evaluate(() => closeModal());
+      if (operation === 'restore') {
+        assert.equal((await page.evaluate(() => archiveTask(tasks[0]))).ok, true);
+        await waitIdle(page);
+      }
+      // The destination write succeeds but deleting the source fails: both copies
+      // stay in memory. Exercise the real archive/restore copy paths.
+      const sourceFile = operation === 'archive' ? 'kanban.md' : 'archive.md';
+      await setFault(page, 'p', sourceFile, { writeFail: true });
+      const result = await page.evaluate(op => op === 'archive'
+        ? archiveTask(tasks[0]) : unarchiveTaskObject(archivedTasks[0]), operation);
+      await waitIdle(page);
+      assert.equal(result.partial, true);
+      await setFault(page, 'p', sourceFile, {});
+      assert.deepEqual(await page.evaluate(() => ({
+        active: tasks.length, archived: archivedTasks.length,
+        sameArray: tasks[0].worklog === archivedTasks[0].worklog,
+        sameRow: tasks[0].worklog[0] === archivedTasks[0].worklog[0],
+      })), { active: 1, archived: 1, sameArray: false, sameRow: false });
+      const archivedWorklog = await page.evaluate(() => archivedTasks[0].worklog);
+      const archivedText = await readFile(page, 'p', 'archive.md');
+      // Also simulate legacy shared state to verify copy-on-write independently.
+      await page.evaluate(() => {
+        tasks[0].worklog = archivedTasks[0].worklog;
+        showTaskDetail(tasks[0]);
+      });
+      await page.fill('#taskDetailWorklog input[type="number"]', '5');
+      assert.deepEqual(await page.evaluate(() => archivedTasks[0].worklog), archivedWorklog);
+      await page.dispatchEvent('#taskDetailWorklog input[type="number"]', 'change');
+      await waitIdle(page);
+      assert.equal(await page.evaluate(() => tasks[0].worklog[0].hours), 5);
+      assert.equal(await page.evaluate(() => tasks[0].worklog[0] === archivedTasks[0].worklog[0]), false);
+      assert.deepEqual(await page.evaluate(() => archivedTasks[0].worklog), archivedWorklog);
+      assert.equal(await readFile(page, 'p', 'archive.md'), archivedText);
+      assert.match(await readFile(page, 'p', 'kanban.md'), /\| 5h/);
+    });
+  }
+
   it('keeps an uncommitted memo in the unsaved board without writing to disk', async ({ page }) => {
     await setup(page);
     await page.click('#taskDetailWorklog > button');
@@ -58,6 +178,26 @@ describe('task detail estimate and worklog', () => {
     assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(memo));
     assert.equal(await readFile(page, 'p', 'kanban.md'), original);
     assert.equal(await page.locator('#taskDetailWorklog input[type="text"]').evaluate(el => el === document.activeElement), true);
+  });
+
+  it('keeps an uncommitted memo unsaved when committing the estimate', async ({ page }) => {
+    await setup(page);
+    await page.click('#taskDetailWorklog > button');
+    await waitIdle(page);
+    const memo = 'Still typing while estimate commits';
+    await page.fill('#taskDetailWorklog input[type="text"]', memo);
+    // Commit the other field without moving focus or blurring the pending memo.
+    await page.evaluate(() => {
+      document.getElementById('taskDetailEstimate').value = '8h';
+      setEstimate('TASK-001');
+    });
+    await waitIdle(page);
+    assert.equal(await page.evaluate(() => tasks[0].estimate), '8h');
+    assert.equal(await page.evaluate(() => tasks[0].worklog[0].memo), '');
+    assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+    assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(memo));
+    assert.equal(await page.locator('#taskDetailWorklog input[type="text"]').evaluate(el => el === document.activeElement), true);
+    assert.doesNotMatch(await readFile(page, 'p', 'kanban.md'), /Still typing while estimate commits/);
   });
 
   it('keeps a memo after Tab during a conflict', async ({ page }) => {
@@ -186,7 +326,7 @@ describe('task detail estimate and worklog', () => {
       assert.equal(await page.inputValue('#taskDetailWorklog input[type="text"]'), '');
       assert.equal(await readFile(page, 'p', 'kanban.md'), original);
     }
-    // Exercise rejection after oninput has already changed the in-memory value.
+    // Exercise rejection after oninput has already changed the draft.
     let alertCount = dialogs.seen.length;
     await change(page, '#taskDetailWorklog input[type="number"]', '-1');
     assert.equal(dialogs.seen.length, alertCount + 1);

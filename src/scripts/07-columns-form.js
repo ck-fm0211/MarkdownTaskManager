@@ -284,19 +284,25 @@
             return applyTaskForm({ id, extra: '' }, { ...v, created: v.created || localDateString() });
         }
 
-        // tasks[] as shown, plus what is typed in an open form (used by the export of unsaved work).
+        // tasks[] plus detail / form drafts (only for exporting unsaved work; never regular saves).
         function boardWithOpenForm() {
-            if (!isFormDirty()) return tasks;
+            let board = tasks;
+            if (isDetailDraftDirty()) {
+                board = tasks.map(task => task === detailDraft.task
+                    ? { ...task, estimate: detailDraft.estimate, worklog: detailDraft.worklog }
+                    : task);
+            }
+            if (!isFormDirty()) return board;
             const v = readTaskForm();
             if (isEditMode && editingTask) {
                 const i = tasks.indexOf(editingTask);
-                const edited = applyTaskForm(editingTask, v);
-                if (i < 0) return tasks.concat([edited]);
-                const list = tasks.slice();
+                const edited = applyTaskForm(board[i] || editingTask, v);
+                if (i < 0) return board.concat([edited]);
+                const list = board.slice();
                 list[i] = edited;
                 return list;
             }
-            return tasks.concat([newTaskFromForm(v, formatTaskId(nextNewTaskNumber()))]);
+            return board.concat([newTaskFromForm(v, formatTaskId(nextNewTaskNumber()))]);
         }
 
         function closeTaskModal() {

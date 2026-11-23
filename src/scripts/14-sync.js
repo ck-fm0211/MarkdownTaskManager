@@ -58,9 +58,9 @@
             return !!s && s.editSeq !== s.savedSeq;
         }
 
-        // Unsaved work of any kind: board changes not on disk yet, or a task form with typed changes.
+        // Unsaved work of any kind: board changes not on disk yet, or typed changes in a task form / detail view.
         function hasUnsavedWork(s = session) {
-            return isDirty(s) || (!!s && isFormDirty());
+            return isDirty(s) || (!!s && (isFormDirty() || isDetailDraftDirty()));
         }
 
         function fileLabel(which) {
@@ -403,7 +403,7 @@
                 else if (s.conflict) { state = 'conflict'; label = t('sync.statusConflict'); }
                 else if (pendingWrites > 0 || busyOperation) { state = 'saving'; label = t('sync.statusSaving'); }
                 else if (s.lastError) { state = 'error'; label = t('sync.statusError'); }
-                else if (isDirty(s)) { state = 'dirty'; label = t('sync.statusUnsaved'); }
+                else if (hasUnsavedWork(s)) { state = 'dirty'; label = t('sync.statusUnsaved'); }
                 else { state = 'saved'; label = t('sync.statusSaved'); }
             }
             el.dataset.state = state;
