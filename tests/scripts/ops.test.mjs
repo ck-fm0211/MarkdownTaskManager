@@ -173,6 +173,77 @@ describe('tasks worklog', () => {
     assert.doesNotMatch(invalid.out, /TASK-001|TOTAL/);
   });
 
+  test('missing required kanban stops archive-only and non-existent folders', (t) => {
+    const dir = fixture(t);
+    rmSync(join(dir, 'kanban.md'));
+    const before = snapshot(dir);
+    for (const target of [dir, join(dir, 'missing')]) {
+      for (const extra of [[], ['--csv']]) {
+        const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...extra, '--dir', target]);
+        assert.equal(r.code, 1, r.out);
+        assert.match(r.stderr, /必須.*kanban\.md.*見つかりません/);
+        assert.ok(r.stderr.includes(target), r.stderr);
+        assert.equal(r.out, r.stderr); // No header or partial aggregate on stdout.
+      }
+    }
+    const invalid = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'other', '--dir', dir]);
+    assert.equal(invalid.code, 2, invalid.out);
+    assert.match(invalid.stderr, /--by/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('impossible Worklog dates in both files stop aggregation even outside the date filter', (t) => {
+    const dir = fixture(t);
+    for (const [file, date] of [['kanban.md', '2026-13-01'], ['archive.md', '2026-02-30']]) {
+      const p = join(dir, file);
+      writeFileSync(p, readFileSync(p, 'utf8').replace(/- 2026-\d{2}-\d{2} \| [\d.]+h \| example/, `- ${date} | 2h`));
+    }
+    const before = snapshot(dir);
+    for (const extra of [[], ['--by', 'period'], ['--by', 'period', '--csv'], ['--to', '2026-01-01']]) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...extra, '--dir', dir]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.stderr, /TASK-001.*2026-13-01/);
+      assert.match(r.stderr, /TASK-003.*2026-02-30/);
+      assert.equal(r.out, r.stderr); // No month rows or TOTAL on stdout.
+    }
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('unmeasured tasks produce no rows; explicit zero estimates and zero-hour logs still count', (t) => {
+    const dir = fixture(t);
+    for (const file of ['kanban.md', 'archive.md']) {
+      const p = join(dir, file);
+      writeFileSync(p, readFileSync(p, 'utf8')
+        .replace(/^\*\*Estimate\*\*:.*\n/gm, '')
+        .replace(/^\*\*Worklog\*\*:\n(?:- .*\n)*/gm, ''));
+    }
+    const before = snapshot(dir);
+    for (const axis of ['category', 'user', 'tag', 'period']) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', axis, '--dir', dir]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /実績データがありません/);
+      assert.doesNotMatch(r.out, /\| TOTAL \|/);
+      const csv = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', axis, '--csv', '--dir', dir]);
+      assert.equal(csv.code, 0, csv.out);
+      assert.equal(csv.out, axis === 'period' ? 'Period,Actual(h)\n' : 'Group,Estimate(h),Actual(h),Diff(h)\n');
+    }
+    assert.deepEqual(snapshot(dir), before);
+
+    // archive.md is optional, and an explicit 0h is measured data.
+    rmSync(join(dir, 'archive.md'));
+    const p = join(dir, 'kanban.md');
+    const unmeasured = readFileSync(p, 'utf8');
+    for (const measurement of ['**Estimate**: 0h', '**Worklog**:\n- 2026-01-10 | 0h']) {
+      writeFileSync(p, unmeasured.replace('**Tags**: #feature #shared', `**Tags**: #feature #shared\n${measurement}`));
+      for (const axis of ['category', 'user', 'tag']) {
+        const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', axis, '--csv', '--dir', dir]);
+        assert.equal(r.code, 0, r.out);
+        assert.match(r.out, /TOTAL,0,0,0\n/);
+        assert.doesNotMatch(r.out, /Frontend|\(none\)/);
+      }
+    }
+  });
+
   test('unparseable Worklog rows in either file stop aggregation with problems on stderr', (t) => {
     const dir = fixture(t);
     for (const file of ['kanban.md', 'archive.md']) {

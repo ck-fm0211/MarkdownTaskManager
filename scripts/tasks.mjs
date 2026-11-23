@@ -171,6 +171,10 @@ if (cmd === 'where') {
     console.error('--from は --to 以前の日付を指定してください');
     process.exit(2);
   }
+  if (!k) {
+    console.error(`[停止] 対象フォルダー ${visible(dir)} に必須の kanban.md が見つかりません。`);
+    process.exit(1);
+  }
   const dups = F.findDuplicateIds(active, archived);
   if (dups.length) {
     console.error(`[停止] 重複した ID: ${dups.join(', ')}。アーカイブ処理の中断が原因の可能性があります。集計前に重複を解消してください。`);
@@ -183,6 +187,16 @@ if (cmd === 'where') {
     if (a) printProblems('archive.md', a.problems, console.error);
     process.exit(1);
   }
+  let invalidWorklogDates = false;
+  for (const task of [...active, ...archived]) {
+    for (const entry of task.worklog || []) {
+      if (!F.isIsoDate(entry.date)) {
+        console.error(`[停止] ${visible(task.id)}: Worklog の日付 ${visible(entry.date)} は実在する YYYY-MM-DD ではありません。`);
+        invalidWorklogDates = true;
+      }
+    }
+  }
+  if (invalidWorklogDates) process.exit(1);
   const csv = args.includes('--csv');
   const period = by === 'period';
   const headers = period ? ['Period', 'Actual(h)'] : ['Group', 'Estimate(h)', 'Actual(h)', 'Diff(h)'];
@@ -204,6 +218,9 @@ if (cmd === 'where') {
   for (const task of [...active, ...archived]) {
     const entries = (task.worklog || []).filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
     if ((from || to) && !entries.length) continue;
+    const hasEstimate = (task.estimate || '').trim() !== '';
+    const hasWorklog = entries.length > 0;
+    if (!period && !hasEstimate && !hasWorklog) continue;
     const actual = entries.reduce((sum, e) => sum + e.hours, 0);
     const estimate = parseEstimateHours(task.estimate);
     if (estimate === null) invalidEstimates++;
