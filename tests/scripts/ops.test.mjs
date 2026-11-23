@@ -23,6 +23,133 @@ function run(cwd, cmd, args, env = {}) {
 }
 const node = (cwd, script, args = [], env = {}) => run(cwd, process.execPath, [script, ...args], env);
 
+describe('tasks worklog', () => {
+  function fixture(t) {
+    const dir = tmp('mtm-worklog-');
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const task = (id, category, estimate, logs, assigned = '@alice, @bob', tags = '#feature #shared') =>
+      `### TASK-${id} | Example ${id}\n**Status**: todo\n**Priority**: High | **Category**: ${category} | **Assigned**: ${assigned}\n**Created**: 2026-01-01\n**Tags**: ${tags}\n**Estimate**: ${estimate}\n\n**Worklog**:\n${logs.map(([date, hours]) => `- ${date} | ${hours}h | example`).join('\n')}\n\n`;
+    writeFileSync(join(dir, 'kanban.md'), `# Board\n<!-- Format: v2 -->\n<!-- Config: Last Task ID: 4 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo) | Done (done)\n\n---\n\n## Tasks\n\n${
+      task('001', 'Backend', '8h', [['2026-01-10', 3.5], ['2026-02-01', 2]])}${
+      task('002', 'Frontend', '2.25', [['2026-02-02', 4]], '@alice', '#feature')}${
+      task('004', '', '1', [], '', '')}`);
+    writeFileSync(join(dir, 'archive.md'), `# Task Archive\n<!-- Format: v2 -->\n\n## ✅ Archives\n\n${
+      task('003', 'Backend', '1.5 H', [['2026-01-31', 0.75]], '', '')}`);
+    return dir;
+  }
+
+  test('totals include active and archived tasks; check stays OK and files stay unchanged', (t) => {
+    const dir = fixture(t);
+    const before = snapshot(dir);
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--dir', dir]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /\| TOTAL \| 12\.75 \| 10\.25 \| -2\.5 \|/);
+    const check = node(ROOT, 'scripts/tasks.mjs', ['check', '--dir', dir]);
+    assert.equal(check.code, 0, check.out);
+    assert.match(check.out, /\[OK\]/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('category is the default; estimates, actuals and both signs of diff are grouped correctly', (t) => {
+    const dir = fixture(t);
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'category', '--dir', dir]);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(r.out, node(ROOT, 'scripts/tasks.mjs', ['worklog', '--dir', dir]).out);
+    assert.match(r.out, /\| Group \| Estimate\(h\) \| Actual\(h\) \| Diff\(h\) \|/);
+    assert.match(r.out, /\| Backend \| 9\.5 \| 6\.25 \| -3\.25 \|/);
+    assert.match(r.out, /\| Frontend \| 2\.25 \| 4 \| 1\.75 \|/);
+    assert.match(r.out, /\| \(none\) \| 1 \| 0 \| -1 \|/);
+  });
+
+  test('CSV emits the same numeric totals and escapes commas and quotes', (t) => {
+    const dir = fixture(t);
+    const p = join(dir, 'kanban.md');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('Frontend', 'UI, "web"'));
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--csv', '--dir', dir]);
+    assert.equal(r.code, 0, r.out);
+    // Parse RFC4180 fields, including escaped double quotes.
+    const rows = r.out.trim().split(/\r?\n/).map((line) => [...line.matchAll(/(?:^|,)("(?:[^"]|"")*"|[^,]*)/g)]
+      .map((m) => m[1].startsWith('"') ? m[1].slice(1, -1).replace(/""/g, '"') : m[1]));
+    assert.deepEqual(rows[0], ['Group', 'Estimate(h)', 'Actual(h)', 'Diff(h)']);
+    assert.deepEqual(rows.find(([group]) => group === 'UI, "web"'), ['UI, "web"', '2.25', '4', '1.75']);
+    assert.deepEqual(rows.at(-1), ['TOTAL', '12.75', '10.25', '-2.5']);
+  });
+
+  test('user/tag use full attribution while TOTAL counts each task once', (t) => {
+    const dir = fixture(t);
+    for (const [axis, key] of [['user', '@bob'], ['tag', '#shared']]) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', axis, '--dir', dir]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, new RegExp(`\\| ${key} \\| 8 \\| 5\\.5 \\| -2\\.5 \\|`));
+      assert.match(r.out, /\| \(none\) \| 2\.5 \| 0\.75 \| -1\.75 \|/);
+      assert.match(r.out, /\| TOTAL \| 12\.75 \| 10\.25 \| -2\.5 \|/);
+      assert.match(r.out, /小計の合計が TOTAL を超える/);
+    }
+  });
+
+  test('inclusive date filtering keeps full estimates only for tasks with matching entries', (t) => {
+    const dir = fixture(t);
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--from', '2026-01-31', '--to', '2026-02-01', '--dir', dir]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /2026-01-31 ～ 2026-02-01/);
+    assert.match(r.out, /\| TOTAL \| 9\.5 \| 2\.75 \| -6\.75 \|/);
+    assert.doesNotMatch(r.out, /Frontend|\(none\)/);
+    for (const [flag, date] of [['--from', '2026-02-01'], ['--to', '2026-01-31']]) {
+      const oneSided = node(ROOT, 'scripts/tasks.mjs', ['worklog', flag, date, '--dir', dir]);
+      assert.equal(oneSided.code, 0, oneSided.out);
+      assert.match(oneSided.out, flag === '--from' ? /\| TOTAL \| 10\.25 \| 6 \| -4\.25 \|/ : /\| TOTAL \| 9\.5 \| 4\.25 \| -5\.25 \|/);
+    }
+  });
+
+  test('period groups entries by month and sorts ascending, including CSV and date filtering', (t) => {
+    const dir = fixture(t);
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'period', '--dir', dir]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /\| Period \| Actual\(h\) \|\n\| --- \| --- \|\n\| 2026-01 \| 4\.25 \|\n\| 2026-02 \| 6 \|\n\| TOTAL \| 10\.25 \|/);
+    const csv = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'period', '--from', '2026-02-01', '--csv', '--dir', dir]);
+    assert.equal(csv.code, 0, csv.out);
+    assert.equal(csv.out, 'Period,Actual(h)\n2026-02,6\nTOTAL,6\n');
+  });
+
+  test('unparseable estimates are excluded and counted once per task', (t) => {
+    const dir = fixture(t);
+    const p = join(dir, 'kanban.md');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('**Estimate**: 8h', '**Estimate**: 1 day').replace('**Estimate**: 2.25', '**Estimate**: '));
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'user', '--dir', dir]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /\| TOTAL \| 2\.5 \| 10\.25 \| 7\.75 \|/);
+    assert.match(r.out, /解析できない Estimate が 1 件あります/);
+  });
+
+  test('empty scope or empty date range produces a clear message or just CSV headers', (t) => {
+    const dir = fixture(t);
+    for (const extra of [['--from', '2027-01-01'], []]) {
+      if (!extra.length) {
+        writeFileSync(join(dir, 'kanban.md'), '# Board\n<!-- Format: v2 -->\n\n## Tasks\n');
+        writeFileSync(join(dir, 'archive.md'), '# Task Archive\n\n## ✅ Archives\n');
+      }
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...extra, '--dir', dir]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /実績データがありません/);
+      const csv = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--csv', ...extra, '--dir', dir]);
+      assert.equal(csv.code, 0, csv.out);
+      assert.equal(csv.out, 'Group,Estimate(h),Actual(h),Diff(h)\n');
+    }
+  });
+
+  test('invalid dates, missing values and unknown axes exit 2; help describes estimate filtering', (t) => {
+    const dir = fixture(t);
+    for (const args of [['--from', '2026-1-01'], ['--to', 'yesterday'], ['--from'], ['--by', 'other']]) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...args, '--dir', dir]);
+      assert.equal(r.code, 2, r.out);
+      assert.match(r.out, /指定してください/);
+    }
+    const help = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--help'], { MTM_CONFIG: join(dir, 'missing.json') });
+    assert.equal(help.code, 0, help.out);
+    assert.match(help.out, /Estimate は全量/);
+  });
+});
+
 // Operations folders B / C / D + a config file pointing at them.
 function opsFolders() {
   const base = tmp();
