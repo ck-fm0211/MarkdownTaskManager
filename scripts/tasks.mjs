@@ -64,16 +64,16 @@ const archived = a ? a.tasks : [];
 // NULs (e.g. of a UTF-16 file read as UTF-8, or in a task's text) are shown as "␀", never written to the terminal.
 const visible = (text) => String(text).replace(/\0/g, '\u2400');
 
-function printProblems(label, list) {
+function printProblems(label, list, print = console.log) {
   for (const p of list) {
     if (p.code === 'nul-char') {
       // Valid UTF-8 with a NUL (U+0000): saving again as UTF-8 does not remove it — say where it is.
-      console.log(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。␀ のすぐ隣の � は NUL で切れた文字の残りなので、それも削除してください（NUL のバイトだけを消すと壊れた文字が残り、「UTF-8 ではありません」と表示されます）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
-      (p.lines || []).forEach((l) => console.log(`      ${l}`));
+      print(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。␀ のすぐ隣の � は NUL で切れた文字の残りなので、それも削除してください（NUL のバイトだけを消すと壊れた文字が残り、「UTF-8 ではありません」と表示されます）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
+      (p.lines || []).forEach((l) => print(`      ${l}`));
       continue;
     }
-    console.log(`  ✗ ${label}: ${p.code}${p.id ? ' ' + p.id : ''}${p.section ? ' [' + p.section + ']' : ''}`);
-    (p.lines || []).slice(0, 8).forEach((l) => console.log(`      ${visible(l)}`));
+    print(`  ✗ ${label}: ${p.code}${p.id ? ' ' + p.id : ''}${p.section ? ' [' + p.section + ']' : ''}`);
+    (p.lines || []).slice(0, 8).forEach((l) => print(`      ${visible(l)}`));
   }
 }
 
@@ -162,10 +162,26 @@ if (cmd === 'where') {
     process.exit(2);
   }
   for (const [name, value] of [['--from', from], ['--to', to]]) {
-    if (value !== null && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      console.error(`${name} は YYYY-MM-DD で指定してください`);
+    if (value !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !F.isIsoDate(value))) {
+      console.error(`${name} は実在する日付を YYYY-MM-DD で指定してください`);
       process.exit(2);
     }
+  }
+  if (from && to && from > to) {
+    console.error('--from は --to 以前の日付を指定してください');
+    process.exit(2);
+  }
+  const dups = F.findDuplicateIds(active, archived);
+  if (dups.length) {
+    console.error(`[停止] 重複した ID: ${dups.join(', ')}。アーカイブ処理の中断が原因の可能性があります。集計前に重複を解消してください。`);
+    process.exit(1);
+  }
+  if (notUtf8.length || (k && k.problems.length) || (a && a.problems.length)) {
+    console.error('[停止] 入力ファイルを正しく解析できないため、集計できません。問題を修正してから実行してください（確認: npm run tasks -- check）。');
+    for (const label of notUtf8) console.error(`  ✗ ${label}: UTF-8 ではありません。UTF-8（BOM なし）で保存し直してください。`);
+    if (k) printProblems('kanban.md', k.problems, console.error);
+    if (a) printProblems('archive.md', a.problems, console.error);
+    process.exit(1);
   }
   const csv = args.includes('--csv');
   const period = by === 'period';
@@ -179,7 +195,6 @@ if (cmd === 'where') {
   const groups = new Map();
   const total = { estimate: 0, actual: 0 };
   let invalidEstimates = 0;
-  let entryCount = 0;
   const add = (key, estimate, actual) => {
     if (!groups.has(key)) groups.set(key, { estimate: 0, actual: 0 });
     const group = groups.get(key);
@@ -189,7 +204,6 @@ if (cmd === 'where') {
   for (const task of [...active, ...archived]) {
     const entries = (task.worklog || []).filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
     if ((from || to) && !entries.length) continue;
-    entryCount += entries.length;
     const actual = entries.reduce((sum, e) => sum + e.hours, 0);
     const estimate = parseEstimateHours(task.estimate);
     if (estimate === null) invalidEstimates++;
@@ -210,10 +224,10 @@ if (cmd === 'where') {
   rows.push(row('TOTAL', total));
   if (csv) {
     const escape = (value) => /[,"\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-    for (const values of [headers, ...(entryCount ? rows : [])]) console.log(values.map(escape).join(','));
+    for (const values of [headers, ...(groups.size ? rows : [])]) console.log(values.map(escape).join(','));
   } else {
     console.log(`Worklog — ${by} (${from || '開始指定なし'} ～ ${to || '終了指定なし'})\n`);
-    if (!entryCount) console.log('実績データがありません');
+    if (!groups.size) console.log('実績データがありません');
     else {
       const escape = (value) => visible(value).replace(/\r?\n/g, '<br>').replace(/\|/g, '&#124;');
       for (const values of [headers, headers.map(() => '---'), ...rows]) console.log(`| ${values.map(escape).join(' | ')} |`);

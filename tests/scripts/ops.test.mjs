@@ -19,7 +19,7 @@ function tmp(prefix = 'mtm-test-') { return mkdtempSync(join(tmpdir(), prefix));
 
 function run(cwd, cmd, args, env = {}) {
   const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', shell: isWin && cmd === 'npm', env: { ...process.env, ...env } });
-  return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
+  return { code: r.status, out: (r.stdout || '') + (r.stderr || ''), stderr: r.stderr || '' };
 }
 const node = (cwd, script, args = [], env = {}) => run(cwd, process.execPath, [script, ...args], env);
 
@@ -147,6 +147,114 @@ describe('tasks worklog', () => {
     const help = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--help'], { MTM_CONFIG: join(dir, 'missing.json') });
     assert.equal(help.code, 0, help.out);
     assert.match(help.out, /Estimate は全量/);
+  });
+
+  test('duplicate IDs stop aggregation before parse problems; argument errors take priority', (t) => {
+    const dir = fixture(t);
+    const p = join(dir, 'archive.md');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('TASK-003', 'TASK-001'));
+    const before = snapshot(dir);
+    const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--dir', dir]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.stderr, /TASK-001/);
+    assert.match(r.stderr, /アーカイブ.*中断|中断.*アーカイブ/);
+    assert.match(r.stderr, /重複.*修正|重複.*解消/);
+    assert.doesNotMatch(r.out, /TOTAL/);
+    assert.deepEqual(snapshot(dir), before);
+
+    appendFileSync(p, '\nUnparseable archive content\n');
+    const duplicate = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--dir', dir]);
+    assert.equal(duplicate.code, 1, duplicate.out);
+    assert.match(duplicate.stderr, /重複.*TASK-001/);
+    assert.doesNotMatch(duplicate.out, /TOTAL|lossy-task/);
+    const invalid = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--from', '2026-02-30', '--dir', dir]);
+    assert.equal(invalid.code, 2, invalid.out);
+    assert.match(invalid.stderr, /--from/);
+    assert.doesNotMatch(invalid.out, /TASK-001|TOTAL/);
+  });
+
+  test('unparseable Worklog rows in either file stop aggregation with problems on stderr', (t) => {
+    const dir = fixture(t);
+    for (const file of ['kanban.md', 'archive.md']) {
+      const p = join(dir, file);
+      const original = readFileSync(p, 'utf8');
+      writeFileSync(p, original.replace(/- 2026-\d{2}-\d{2} \| [\d.]+h \| example/, '- 2026-11-20 | 2 h | x'));
+      const before = snapshot(dir);
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--dir', dir]);
+      assert.equal(r.code, 1, r.out);
+      assert.ok(r.stderr.includes(file), r.stderr);
+      assert.match(r.stderr, /lossy-task/);
+      assert.match(r.stderr, /2026-11-20 \| 2 h \| x/);
+      assert.doesNotMatch(r.out, /TOTAL/);
+      assert.deepEqual(snapshot(dir), before);
+      writeFileSync(p, original);
+    }
+  });
+
+  test('non-UTF-8 input in either file stops aggregation without changing files', (t) => {
+    const dir = fixture(t);
+    for (const file of ['kanban.md', 'archive.md']) {
+      const p = join(dir, file);
+      const original = readFileSync(p);
+      writeFileSync(p, Buffer.from([0x82, 0xa0])); // Shift_JIS, invalid UTF-8.
+      const before = snapshot(dir);
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--dir', dir]);
+      assert.equal(r.code, 1, r.out);
+      assert.ok(r.stderr.includes(file), r.stderr);
+      assert.match(r.stderr, /UTF-8 ではありません/);
+      assert.doesNotMatch(r.out, /TOTAL/);
+      assert.deepEqual(snapshot(dir), before);
+      writeFileSync(p, original);
+    }
+  });
+
+  test('estimate-only tasks appear for category/user/tag, but not periods or date filters', (t) => {
+    const dir = fixture(t);
+    const p = join(dir, 'kanban.md');
+    writeFileSync(p, readFileSync(p, 'utf8').split('### TASK-002')[0]
+      .replace(/\*\*Worklog\*\*:[\s\S]*$/, ''));
+    writeFileSync(join(dir, 'archive.md'), '# Task Archive\n\n## ✅ Archives\n');
+    const before = snapshot(dir);
+    for (const [axis, key] of [['category', 'Backend'], ['user', '@alice'], ['tag', '#feature']]) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', axis, '--dir', dir]);
+      assert.equal(r.code, 0, r.out);
+      assert.ok(r.out.includes(`| ${key} | 8 | 0 | -8 |`), r.out);
+      assert.match(r.out, /\| TOTAL \| 8 \| 0 \| -8 \|/);
+      assert.doesNotMatch(r.out, /実績データがありません/);
+      const csv = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', axis, '--csv', '--dir', dir]);
+      assert.equal(csv.code, 0, csv.out);
+      assert.ok(csv.out.includes(`${key},8,0,-8\n`), csv.out);
+      assert.match(csv.out, /TOTAL,8,0,-8\n/);
+    }
+    for (const extra of [['--by', 'period'], ['--from', '2026-01-01'], ['--to', '2026-12-31']]) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...extra, '--dir', dir]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /実績データがありません/);
+      assert.doesNotMatch(r.out, /TOTAL/);
+      const csv = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...extra, '--csv', '--dir', dir]);
+      assert.equal(csv.code, 0, csv.out);
+      assert.equal(csv.out, extra.includes('period') ? 'Period,Actual(h)\n' : 'Group,Estimate(h),Actual(h),Diff(h)\n');
+    }
+    assert.deepEqual(snapshot(dir), before);
+  });
+
+  test('date bounds must be real dates in ascending order; valid ranges still aggregate', (t) => {
+    const dir = fixture(t);
+    for (const args of [
+      ['--from', '2026-02-30'], ['--to', '2026-02-30'],
+      ['--from', '2026-11-23', '--to', '2026-11-01'],
+    ]) {
+      const r = node(ROOT, 'scripts/tasks.mjs', ['worklog', ...args, '--dir', dir]);
+      assert.equal(r.code, 2, r.out);
+      assert.match(r.stderr, /--from|--to/);
+      assert.doesNotMatch(r.out, /TOTAL/);
+    }
+    const valid = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--from', '2026-01-10', '--to', '2026-02-02', '--dir', dir]);
+    assert.equal(valid.code, 0, valid.out);
+    assert.match(valid.out, /\| TOTAL \| 11\.75 \| 10\.25 \| -1\.5 \|/);
+    const sameDay = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--from', '2026-02-01', '--to', '2026-02-01', '--dir', dir]);
+    assert.equal(sameDay.code, 0, sameDay.out);
+    assert.match(sameDay.out, /\| TOTAL \| 8 \| 2 \| -6 \|/);
   });
 });
 

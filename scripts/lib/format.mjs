@@ -16,7 +16,7 @@ export function loadFormat(rootDir = root) {
     'formatTaskId', 'nextTaskNumber', 'maxIdInText', 'findDuplicateIds', 'matchesTaskId', 'taskMatchesSearch',
     'normalizeForSearch', 'normalizeEol', 'detectEol', 'legacySlug', 'defaultArchivePreamble',
     'decodeUtf8', 'taskWriteProblems', 'parseTasksFromSection', 'nulCharProblems', 'unwritableTextProblems',
-    'configWriteProblems',
+    'configWriteProblems', 'isIsoDate',
   ];
   // TextDecoder is a Web API (not a JavaScript built-in), so it is passed in explicitly.
   const ctx = vm.createContext({ console, TextDecoder });
