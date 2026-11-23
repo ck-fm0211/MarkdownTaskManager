@@ -9,6 +9,20 @@ relevant problems were re-implemented against the requirements of this fork.
 
 日本語の概要は [docs/ja/README.md](docs/ja/README.md) を参照。
 
+### Estimate / Worklog と AI スキル
+
+- Estimate head field (`**Estimate**: 8h`) and `**Worklog**:` section
+  (`- YYYY-MM-DD | <hours>h | <memo>`, memo optional): parsed and serialized with Worklog before Notes,
+  preserving values through round trips.
+- Task detail UI: Estimate input, Worklog rows (date / hours / memo) with add / edit / delete controls
+  mirroring the Subtasks UX, and an actual-total display. Archived tasks are read-only.
+- Read-only aggregation CLI:
+  `npm run tasks -- worklog [--by category|user|tag|period] [--from --to] [--csv]` —
+  Estimate vs actual with diff, as Markdown or CSV.
+- Three AI skills: `task-history-explorer`, `adr-from-tasks` (MADR 4.0.0), and `worklog-aggregator`.
+  SSOTs live in `docs/ai/skills/`, with thin `.claude/skills/<name>/SKILL.md` wrappers and the shared
+  selection SSOT `_shared-task-selection.md`; referenced from AGENTS.md section 6 and `GEMINI.md.exemple`.
+
 ### Review fixes, round 8 (external review of `c966c91..1b3c200`)
 Data protection
 - The app never writes a NUL (U+0000). Round 7 made a NUL "not UTF-8", but a NUL typed or pasted into the
