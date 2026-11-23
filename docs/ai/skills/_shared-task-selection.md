@@ -53,10 +53,10 @@ grep -nE "^### TASK-|^\*\*Status\*\*:" kanban.md
 grep -nE "^### TASK-|^\*\*Status\*\*:" archive.md
 
 # category: 他のメタデータと同じ行にもある
-grep -nHE '^### TASK-|\*\*Category\*\*: Backend([[:space:]]*\||[[:space:]]*$)' kanban.md archive.md
+grep -nHE '^### TASK-|\*\*Category\*\*[[:space:]]*[:：][[:space:]]*Backend([[:space:]]*\||[[:space:]]*$)' kanban.md archive.md
 
-# tag: タグ行を絞る（値の完全一致はブロックでも確認）
-grep -nHE '^### TASK-|^\*\*Tags\*\*:.*#bug([[:space:],]|$)' kanban.md archive.md
+# tag: タグ行を絞る（# / ＃ がタグの開始。空白・,・、・，・次の # / ＃・行末が境界）
+grep -nHE '^### TASK-|^[[:space:]]*\*\*Tags\*\*[[:space:]]*[:：].*[#＃]bug([[:space:],、，#＃]|$)' kanban.md archive.md
 
 # TASK-ID: 位置を特定してそのタスクだけ読む
 grep -n "^### TASK-042 " kanban.md
@@ -72,6 +72,9 @@ grep -nHE '^### TASK-|\*\*(Created|Started|Finished)\*\*:|^\*\*Worklog\*\*:|^[[:
 grep は候補抽出であり、説明・コード例・設定の一致をタスクの属性と誤認しないよう、
 候補のブロックで実メタデータを照合する。期間は各日付の値を取り出して範囲と比較し、
 `**Worklog**` を使う場合は同セクション内の記録日だけを数える。
+生の grep ではパーサーが受け付ける区切り文字を取りこぼすことがあるため、grep だけを信用しない。
+判断に迷う場合は共有パーサーで候補を確認する（例: `npm run tasks -- show TASK-NNN` は
+アプリと同じ解析でタスクを読む。別フォルダーなら `--dir <folder>` を付ける）。
 
 Git の例（該当リポジトリで実行。`<path>` は実際の関連ファイルのパスに置き換える）:
 

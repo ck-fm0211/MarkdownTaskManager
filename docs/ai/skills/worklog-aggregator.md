@@ -62,7 +62,9 @@ CSV には Markdown の見出し・脚注は付かない。
 
 ## 実行例とサンプル出力
 
-以下は架空データによる代表例（npm 自体の実行案内は省略）。実際の依頼では CLI を実行し、
+以下は架空データによる代表例（Markdown の例では npm 自体の実行案内は省略）。
+CSV の例は `npm --silent` で実行案内を抑え、標準出力の先頭行を CSV ヘッダーにする。
+実際の依頼では CLI を実行し、
 得られた出力を提示する。サンプルの数値・担当者名を実データの結果として使わない。
 
 ### 既定（category 別・全期間）
@@ -99,7 +101,7 @@ Worklog — user (開始指定なし ～ 終了指定なし)
 ### 月別 + CSV
 
 ```text
-$ npm run tasks -- worklog --by period --from 2026-11-01 --csv
+$ npm --silent run tasks -- worklog --by period --from 2026-11-01 --csv
 Period,Actual(h)
 2026-11,10.5
 TOTAL,10.5
