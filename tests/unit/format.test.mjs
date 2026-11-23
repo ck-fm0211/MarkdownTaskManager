@@ -230,6 +230,52 @@ test('Estimate and Worklog round-trip without changing their meaning', () => {
   assert.ok(generated.indexOf('**Worklog**:') < generated.indexOf('**Notes**:'));
 });
 
+test('colon-less Worklog headings remain description text and round-trip exactly', () => {
+  for (const heading of ['**Worklog**', '**worklog**  ', '**Worklog** without a colon']) {
+    const body = `**Status**: todo\n\nDescription\n${heading}\n\n`;
+    const md = `### TASK-001 | Description\n${body}`;
+    const task = F.parseTask('TASK-001', 'Description', body, 'todo');
+    assert.equal(task.description, `Description\n${heading}`);
+    assert.deepEqual(plain(task.worklog), []);
+    assert.equal(F.serializeTask(task), md);
+    assert.deepEqual(plain(F.findLostLines(body, task)), []);
+    assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+    assert.deepEqual(plain(F.findLostLines(body, { ...task, description: 'Description' })), [heading.trim()]);
+  }
+});
+
+test('colon-less Worklog heading in an extra section is preserved', () => {
+  const body = '**Status**: todo\n\n**Links**:\nhttps://example.com\n**Worklog**\n\n';
+  const task = F.parseTask('TASK-001', 'Links', body, 'todo');
+  assert.equal(task.extra, '**Links**:\nhttps://example.com\n**Worklog**');
+  assert.equal(F.serializeTask(task), `### TASK-001 | Links\n${body}`);
+  assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+});
+
+test('Worklog section accepts ASCII and full-width colons', () => {
+  for (const colon of [':', '：']) {
+    const body = `**Status**: todo\n\n**Worklog** ${colon}\n- 2026-02-28 | 1.5h\n`;
+    const task = F.parseTask('TASK-001', 'Worklog', body, 'todo');
+    assert.equal(task.description, '');
+    assert.deepEqual(plain(task.worklog), [{ date: '2026-02-28', hours: 1.5, memo: '' }]);
+    assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+  }
+});
+
+test('impossible Worklog dates warn with the task id while preserving the entry', () => {
+  for (const [id, date, invalid] of [['TASK-041', '2026-02-30', true], ['TASK-042', '2026-02-28', false]]) {
+    const taskText = `### ${id} | Worklog\n**Status**: todo\n\n**Worklog**:\n- ${date} | 1.5h\n\n`;
+    const board = `# B\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo)\n\n---\n\n## Tasks\n\n${taskText}`;
+    for (const parsed of [F.parseKanbanContent(board), F.parseArchiveContent(`# Task Archive\n\n## ✅ Archives\n\n${taskText}`)]) {
+      assert.deepEqual(plain(parsed.problems), []);
+      assert.deepEqual(plain(parsed.tasks[0].worklog), [{ date, hours: 1.5, memo: '' }]);
+      assert.equal(F.serializeTask(parsed.tasks[0]), taskText);
+      const warnings = parsed.warnings.filter(w => w.code === 'non-iso-date');
+      assert.deepEqual(plain(warnings), invalid ? [{ code: 'non-iso-date', lines: [`${id} Worklog: ${date}`] }] : []);
+    }
+  }
+});
+
 test('Worklog-looking text inside Notes is not parsed as worklog', () => {
   const md = `# B
 <!-- Format: v2 -->

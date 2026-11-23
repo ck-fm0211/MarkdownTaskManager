@@ -28,7 +28,9 @@
         // as "| **Due**: 2026-01-01 |" in the description is description text, not the task's field.
         const PIPED_META_LINE_RE = /^\s*\|\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate)\*\*\s*[:：](?!.*\|\s*$)/;
         const META_SEG_RE = /^\s*\*\*([A-Za-z]+)\*\*\s*[:：]\s*(.*?)\s*$/;
-        const SECTION_STOP_RE = /^\s*\*\*(Subtasks|Worklog|Notes|Links|Review|Dependencies)\*\*/i;
+        // Worklog is structural only with a colon, as in WORKLOG_SECTION_RE; a bare bold
+        // "**Worklog**" is text. Keep the legacy rules for the other section names.
+        const SECTION_STOP_RE = /^\s*\*\*(?:(Subtasks|Notes|Links|Review|Dependencies)\*\*|Worklog\*\*\s*[:：])/i;
         const NOTES_RE = /^\s*\*\*Notes\*\*\s*[:：]/i;
         const WORKLOG_SECTION_RE = /^\s*\*\*Worklog\*\*\s*[:：]/i;
         const WORKLOG_LINE_RE = /^\s*-\s+(\d{4}-\d{2}-\d{2})\s*\|\s*(\d+(?:\.\d+)?)h(?:\s*\|\s*(.*?))?\s*$/;
@@ -295,9 +297,14 @@
         const DATE_FIELDS = [['created', 'Created'], ['started', 'Started'], ['due', 'Due'], ['completed', 'Finished']];
         function nonIsoDates(list) {
             const out = [];
-            (list || []).forEach(t => DATE_FIELDS.forEach(([f, key]) => {
-                if (t[f] && !isIsoDate(t[f])) out.push(`${t.id} ${key}: ${t[f]}`);
-            }));
+            (list || []).forEach(t => {
+                DATE_FIELDS.forEach(([f, key]) => {
+                    if (t[f] && !isIsoDate(t[f])) out.push(`${t.id} ${key}: ${t[f]}`);
+                });
+                (t.worklog || []).forEach(log => {
+                    if (!isIsoDate(log.date)) out.push(`${t.id} Worklog: ${log.date}`);
+                });
+            });
             return out;
         }
 
@@ -520,7 +527,7 @@
 
             // Unsupported sections preserved verbatim: **Links** / **Review** / **Dependencies**.
             const extraStart = /^\s*\*\*(Links|Review|Dependencies)\*\*\s*:/i;
-            const extraStop = /^\s*\*\*(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate|Subtasks|Worklog)\*\*/i;
+            const extraStop = /^\s*\*\*(?:(Status|Priority|Category|Assigned|Created|Started|Due|Finished|Tags|Estimate|Subtasks)\*\*|Worklog\*\*\s*[:：])/i;
             const extraLines = [];
             let capturing = false;
             for (let i = 0; i < beforeNotes.length; i++) {
@@ -660,7 +667,7 @@
                 }
                 // Bare section headers carry no data of their own (an empty "**Notes**:" or
                 // "**Subtasks**:" or "**Worklog**:" is legitimately not written back).
-                if (/^\*\*(Subtasks|Worklog|Notes)\*\*\s*[:：]?$/i.test(t)) return;
+                if (/^\*\*(?:(Subtasks|Notes)\*\*\s*[:：]?|Worklog\*\*\s*[:：])$/i.test(t)) return;
                 if (NOTES_RE.test(t)) t = t.replace(/^\*\*Notes\*\*\s*[:：]\s*/i, '');
                 tokens.push('line:' + t.replace(/\s+/g, ' '));
             });
