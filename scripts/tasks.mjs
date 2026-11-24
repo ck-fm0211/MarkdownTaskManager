@@ -20,7 +20,7 @@ const cmd = args[0] || 'check';
 if (cmd === 'worklog' && args.includes('--help')) {
   console.log(`Usage: npm run tasks -- worklog [--dir <folder>] [--by category|user|tag|period] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--csv]
 現役＋アーカイブを集計します。既定の軸は category、日付範囲は全期間です（両端を含む）。
-日付指定時は範囲内の Worklog があるタスクだけを対象とし、Estimate は全量を計上します。
+日付指定時は範囲内に Worklog があるタスクだけを集計対象とし、その Estimate は全量を計上します（期間按分しません）。
 user/tag の複数所属タスクは各グループに全量を計上し、TOTAL には各タスクを一度だけ計上します。
 period は実績日の月別集計です。Estimate は日付がないため表示しません。`);
   process.exit(0);
@@ -248,6 +248,7 @@ if (cmd === 'where') {
   rows.push(row('TOTAL', total));
   if (csv) {
     const escape = (value) => /[,"\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+    // データなし（groups が空）の CSV はヘッダーのみ（TOTAL,0,0,0 は作らず）、Markdown は「実績データがありません」を表示します。
     for (const values of [headers, ...(groups.size ? rows : [])]) console.log(values.map(escape).join(','));
   } else {
     console.log(`Worklog — ${by} (${from || '開始指定なし'} ～ ${to || '終了指定なし'})\n`);
