@@ -268,8 +268,7 @@ describe('task detail estimate and worklog', () => {
         assert.equal(await page.locator(selector).evaluate(el => el === document.activeElement), true);
         assert.equal(await page.evaluate(() => isDirty()), false);
 
-        // A real click blurs the input and commits it between mousedown and mouseup.
-        // Re-rendering the banner during that change used to swallow this first click.
+        // Use the normal click path to export the still-focused draft.
         const [download] = await Promise.all([
           page.waitForEvent('download', { timeout: 5000 }),
           page.click('#syncDownloadBtn'),
@@ -285,6 +284,69 @@ describe('task detail estimate and worklog', () => {
         await setFault(page, 'p', 'kanban.md', {});
       }
     });
+  }
+
+  for (const width of [740, 1024]) {
+    for (const action of ['Copy', 'Download']) {
+      for (const [field, selector, text] of [
+        ['memo', '#taskDetailWorklog input[type="text"]', '長押しの最初の操作で救出するメモ'],
+        ['estimate', '#taskDetailEstimate', '8h'],
+      ]) {
+        it(`rescues the ${field} with the first held ${action} press at ${width}px in Japanese`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 900 });
+          await page.evaluate(() => setLanguage('ja'));
+          await setup(page);
+          await page.evaluate(() => addWorklog('TASK-001'));
+          await waitIdle(page);
+          const original = await readFile(page, 'p', 'kanban.md');
+          try {
+            await setFault(page, 'p', 'kanban.md', { readFail: true, readDelay: 30 });
+            await page.evaluate(() => checkExternalChanges());
+            assert.deepEqual(await page.evaluate(() => session.lastError), { which: 'kanban', kind: 'read-failed' });
+            await page.fill(selector, text);
+            await page.waitForSelector(`#sync${action}Btn:visible`);
+            assert.equal(await page.isVisible('#syncRetryBtn'), false);
+            const seq = await page.evaluate(() => session.editSeq);
+            if (action === 'Copy') await page.evaluate(() => navigator.clipboard.writeText(''));
+            const bounds = await page.locator(`#sync${action}Btn`).boundingBox();
+            assert.ok(bounds);
+            await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+            const press = async () => {
+              await page.mouse.down();
+              // Without focus preservation, blur queues a save whose 30ms read
+              // failure inserts Retry and moves the target before this release.
+              await page.waitForTimeout(100);
+              await page.mouse.up();
+            };
+            let exported;
+            if (action === 'Download') {
+              const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: 5000 }),
+                press(),
+              ]);
+              exported = await readDownloadedFile(await download.path(), 'utf8');
+            } else {
+              await press();
+              await page.waitForFunction(async value => (await navigator.clipboard.readText()).includes(value), text, { timeout: 5000 });
+              exported = await page.evaluate(() => navigator.clipboard.readText());
+            }
+            if (field === 'estimate') assert.match(exported, /\*\*Estimate\*\*: 8h\n/);
+            else assert.ok(exported.includes(text));
+            assert.equal(await page.locator(selector).evaluate(el => el === document.activeElement), true, 'rescue keeps the draft input focused');
+            await waitIdle(page);
+            assert.equal(await page.evaluate(() => session.editSeq), seq, 'rescue must not commit the draft');
+            assert.equal(await page.evaluate(() => isDirty()), false);
+            assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+            assert.equal(await page.isVisible('#syncRetryBtn'), false, 'no failed save inserts Retry');
+            assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+          } finally {
+            await page.mouse.up();
+            await waitIdle(page);
+            await setFault(page, 'p', 'kanban.md', {});
+          }
+        });
+      }
+    }
   }
 
   it('refreshes the form draft indicator after subtask mutations and reversions', async ({ page }) => {
