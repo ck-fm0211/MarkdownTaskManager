@@ -18,7 +18,7 @@ test('Japanese covers every English key', () => {
   assert.deepEqual(missing, []);
 });
 
-test('Estimate and Worklog UI labels exist in English and Japanese', () => {
+test('Estimate and Worklog UI labels exist in every shipped locale', () => {
   const required = [
     'taskForm.estimateLabel',
     'taskForm.worklogLabel',
@@ -30,7 +30,7 @@ test('Estimate and Worklog UI labels exist in English and Japanese', () => {
     'taskForm.worklogDelete',
   ];
 
-  for (const locale of ['en', 'ja']) {
+  for (const locale of ['en', 'ja', 'fr', 'de', 'zh_cn']) {
     for (const key of required) {
       assert.equal(typeof translations[locale][key], 'string', `${locale}.${key} must exist`);
     }
