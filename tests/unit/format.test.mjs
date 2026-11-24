@@ -276,6 +276,37 @@ test('colon-less Subtasks after Review round-trips as exactly one subtask', () =
 });
 
 for (const section of ['Review', 'Links', 'Dependencies']) {
+  for (const [name, content] of [
+    ['Estimate with a reason', '**Estimate**: 暫定2日\n要件が未確定のためです。'],
+    ['lowercase estimate', '**estimate**: x'],
+    ['trailing empty Estimate', '**Estimate**:']
+  ]) {
+    test(`${name} in ${section} is preserved verbatim without becoming head metadata`, () => {
+      for (const headEstimate of ['', '8h']) {
+        const extra = `**${section}**:\n${content}`;
+        const body = `**Status**: todo\n${headEstimate ? `**Estimate**: ${headEstimate}\n` : ''}\n${extra}\n\n`;
+        const md = `### TASK-001 | ${section}\n${body}`;
+        const parsed = F.parseKanbanContent(`# B\n<!-- Format: v2 -->\n\n## Tasks\n\n${md}`);
+        const task = parsed.tasks[0];
+        assert.equal(task.estimate, headEstimate);
+        assert.equal(task.extra, extra);
+        assert.equal(F.serializeTask(task), md);
+        assert.deepEqual(plain(parsed.problems), []);
+        assert.deepEqual(plain(F.findLostLines(body, task)), []);
+        assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+
+        task.title = 'Edited title';
+        const serialized = F.serializeTask(task);
+        assert.equal(serialized, `### TASK-001 | Edited title\n${body}`);
+        const again = F.parseTask('TASK-001', task.title, serialized.slice(serialized.indexOf('\n') + 1), 'todo');
+        assert.equal(again.estimate, headEstimate);
+        assert.equal(again.extra, extra);
+        assert.equal(F.serializeTask(again), serialized);
+        assert.deepEqual(plain(F.taskWriteProblems(again)), []);
+      }
+    });
+  }
+
   test(`colon-less Estimate in ${section} round-trips with its following reason`, () => {
     const extra = `**${section}**:\n**Estimate** は暫定です\n要件が未確定のためです。`;
     const body = `**Status**: todo\n**Estimate**: 8h\n\n${extra}\n\n`;
