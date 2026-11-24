@@ -70,53 +70,109 @@ describe('task detail estimate and worklog', () => {
     }
   });
 
-  for (const action of ['Copy', 'Download']) {
-    it(`exports empty draft hours as round-trippable 0h on ${action}`, async ({ page }) => {
-      await setup(page);
-      await page.click('#taskDetailWorklog > button');
+  it('confirms reload before discarding a focused estimate and preserves it on cancel', async ({ page, dialogs }) => {
+    await setup(page);
+    const original = await readFile(page, 'p', 'kanban.md');
+    const writes = await page.evaluate(() => window.__mockFS.writeLog.length);
+    try {
+      await setFault(page, 'p', 'kanban.md', { readFail: true });
+      await page.evaluate(() => checkExternalChanges());
+      await page.waitForSelector('#syncReloadBtn:visible');
+      // The disk recovers before clicking, so an accidental blur could save the edit.
+      await setFault(page, 'p', 'kanban.md', {});
+      await page.fill('#taskDetailEstimate', '15h');
+      const confirmation = await page.evaluate(() => t('confirm.reloadDiscard'));
+      const seen = dialogs.seen.length;
+      dialogs.queue.push(false);
+      await page.click('#syncReloadBtn');
       await waitIdle(page);
-      await change(page, '#taskDetailWorklog input[type="number"]', '2');
-      const original = await readFile(page, 'p', 'kanban.md');
-      const selector = '#taskDetailWorklog input[type="number"]';
-      try {
-        await setFault(page, 'p', 'kanban.md', { readFail: true });
-        await page.evaluate(() => checkExternalChanges());
-        await page.fill(selector, '');
-        await page.waitForSelector(`#sync${action}Btn:visible`);
-        let exported;
-        if (action === 'Download') {
-          const [download] = await Promise.all([
-            page.waitForEvent('download', { timeout: 5000 }),
-            page.click('#syncDownloadBtn'),
-          ]);
-          exported = await readDownloadedFile(await download.path(), 'utf8');
-        } else {
-          await page.evaluate(() => navigator.clipboard.writeText(''));
-          await page.click('#syncCopyBtn');
-          await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('**Worklog**:'));
-          exported = await page.evaluate(() => navigator.clipboard.readText());
-        }
-        assert.match(exported, /\*\*Worklog\*\*:\n- \d{4}-\d{2}-\d{2} \| 0h\n/);
-        assert.doesNotMatch(exported, /NaNh/);
-        const roundTrip = await page.evaluate(text => {
-          const parsed = parseKanbanContent(text);
-          const again = parseKanbanContent(generateKanbanContent(parsed.config, parsed.tasks));
-          return { problems: parsed.problems, againProblems: again.problems, tasks: parsed.tasks, againTasks: again.tasks };
-        }, exported);
-        assert.deepEqual(roundTrip.problems, []);
-        assert.deepEqual(roundTrip.againProblems, []);
-        assert.deepEqual(roundTrip.againTasks, roundTrip.tasks);
-        assert.equal(roundTrip.tasks[0].worklog[0].hours, 0);
-        assert.equal(await page.inputValue(selector), '');
-        assert.equal(await page.evaluate(() => Number.isNaN(detailDraft.worklog[0].hours)), true);
-        assert.equal(await page.evaluate(() => tasks[0].worklog[0].hours), 2);
-        assert.equal(await page.evaluate(() => isDirty()), false);
-        assert.equal(await readFile(page, 'p', 'kanban.md'), original);
-      } finally {
+      assert.deepEqual(dialogs.seen.slice(seen), [{ type: 'confirm', message: confirmation }]);
+      assert.equal(await page.inputValue('#taskDetailEstimate'), '15h');
+      assert.equal(await page.locator('#taskDetailEstimate').evaluate(el => el === document.activeElement), true);
+      assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+      assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+
+      dialogs.queue.push(true);
+      await page.click('#syncReloadBtn');
+      await page.waitForFunction(() => session && tasks.length === 1 && !hasUnsavedWork() && !document.getElementById('taskModal').classList.contains('active'));
+      await waitIdle(page);
+      assert.deepEqual(dialogs.seen.slice(seen), [
+        { type: 'confirm', message: confirmation },
+        { type: 'confirm', message: confirmation },
+      ]);
+      assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+      assert.equal(await page.evaluate(() => window.__mockFS.writeLog.length), writes);
+      assert.equal(await page.evaluate(() => tasks[0].estimate), '');
+    } finally {
+      await setFault(page, 'p', 'kanban.md', {});
+      await waitIdle(page);
+    }
+  });
+
+  for (const action of ['Copy', 'Download']) {
+    for (const [label, type, invalid] of [
+      ['empty hours', 'number', ''],
+      ['negative hours', 'number', '-5'],
+    ]) {
+      it(`omits draft ${label} while rescuing valid worklog on ${action}`, async ({ page }) => {
+        await setup(page);
+        // Two committed rows let us check both valid rescue and invalid omission.
+        await page.evaluate(() => addWorklog('TASK-001'));
         await waitIdle(page);
-        await setFault(page, 'p', 'kanban.md', {});
-      }
-    });
+        await change(page, '#taskDetailWorklog input[type="date"]', '2026-11-23');
+        await change(page, '#taskDetailWorklog input[type="number"]', '2');
+        await change(page, '#taskDetailWorklog input[type="text"]', 'valid rescue row');
+        await page.evaluate(() => addWorklog('TASK-001'));
+        await waitIdle(page);
+        const row = '#taskDetailWorklog li:nth-child(2)';
+        await change(page, `${row} input[type="number"]`, '3');
+        await change(page, `${row} input[type="text"]`, 'invalid rescue row');
+        const original = await readFile(page, 'p', 'kanban.md');
+        const committed = await page.evaluate(() => tasks[0].worklog);
+        const selector = `${row} input[type="${type}"]`;
+        try {
+          await setFault(page, 'p', 'kanban.md', { readFail: true });
+          await page.evaluate(() => checkExternalChanges());
+          await page.fill(selector, invalid);
+          await page.waitForSelector(`#sync${action}Btn:visible`);
+          const draft = await page.evaluate(() => detailDraft.worklog);
+          let exported;
+          if (action === 'Download') {
+            const [download] = await Promise.all([
+              page.waitForEvent('download', { timeout: 5000 }),
+              page.click('#syncDownloadBtn'),
+            ]);
+            exported = await readDownloadedFile(await download.path(), 'utf8');
+          } else {
+            await page.evaluate(() => navigator.clipboard.writeText(''));
+            await page.click('#syncCopyBtn');
+            await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('**Worklog**:'));
+            exported = await page.evaluate(() => navigator.clipboard.readText());
+          }
+          assert.match(exported, /- 2026-11-23 \| 2h \| valid rescue row\n/);
+          assert.doesNotMatch(exported, /invalid rescue row|\| (?:0|-5|NaN)h/);
+          const roundTrip = await page.evaluate(text => {
+            const parsed = parseKanbanContent(text);
+            const again = parseKanbanContent(generateKanbanContent(parsed.config, parsed.tasks));
+            return { problems: parsed.problems, againProblems: again.problems, tasks: parsed.tasks, againTasks: again.tasks };
+          }, exported);
+          assert.deepEqual(roundTrip.problems, []);
+          assert.deepEqual(roundTrip.againProblems, []);
+          assert.deepEqual(roundTrip.againTasks, roundTrip.tasks);
+          assert.deepEqual(roundTrip.tasks[0].worklog, [{ date: '2026-11-23', hours: 2, memo: 'valid rescue row' }]);
+          assert.equal(await page.inputValue(selector), invalid);
+          assert.equal(await page.locator(selector).evaluate(el => el === document.activeElement), true);
+          assert.deepEqual(await page.evaluate(() => detailDraft.worklog), draft);
+          assert.deepEqual(await page.evaluate(() => tasks[0].worklog), committed);
+          assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+          assert.equal(await page.evaluate(() => isDirty()), false);
+          assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+        } finally {
+          await setFault(page, 'p', 'kanban.md', {});
+          await waitIdle(page);
+        }
+      });
+    }
   }
 
   for (const [field, selector, invalid, reverted] of [

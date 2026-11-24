@@ -293,8 +293,8 @@
                 board = tasks.map(task => task === detailDraft.task
                     ? {
                         ...task, estimate: detailDraft.estimate,
-                        // Empty hours stay invalid in the draft, but exports must read back.
-                        worklog: detailDraft.worklog.map(log => ({ ...log, hours: Number.isFinite(log.hours) ? log.hours : 0 }))
+                        // Export only restorable rows without changing the in-progress draft.
+                        worklog: detailDraft.worklog.filter(log => isIsoDate(log.date) && Number.isFinite(log.hours) && log.hours >= 0)
                     }
                     : task);
             }
