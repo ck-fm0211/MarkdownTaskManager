@@ -410,14 +410,15 @@
             if (!task || wasArchiveModalActive || !input) return;
             const draft = draftForDetail(task);
             draft.estimate = input.value;
-            if (!canEditDetail() || worklogWriteRefused({ ...task, estimate: draft.estimate }, task.worklog || [])) {
+            const estimate = input.value.trim();
+            if (!canEditDetail() || worklogWriteRefused({ ...task, estimate }, task.worklog || [])) {
                 draft.estimate = input.value = task.estimate || '';
                 refreshDetailDraft();
                 return;
             }
-            task.estimate = draft.estimate;
-            input.defaultValue = task.estimate;
-            draftForDetail(task).estimate = task.estimate;
+            task.estimate = estimate;
+            input.value = input.defaultValue = estimate;
+            draftForDetail(task).estimate = estimate;
             commitDetailRefresh();
             renderKanban();
             persistKanban();
@@ -461,8 +462,9 @@
             const draft = draftForDetail(task);
             draft.worklog[idx][field] = worklogValue(field, value);
             // Validate only this field against committed values, never another pending input.
+            const committedVal = field === 'memo' ? String(value).trim() : worklogValue(field, value);
             const worklog = task.worklog.map((log, i) => i === idx
-                ? { ...log, [field]: draft.worklog[idx][field] }
+                ? { ...log, [field]: committedVal }
                 : { ...log });
             if (!canEditDetail() || worklogWriteRefused(task, worklog)) {
                 draft.worklog[idx][field] = task.worklog[idx][field];
@@ -471,8 +473,8 @@
                 return;
             }
             task.worklog = worklog.map(log => ({ ...log }));
-            input.value = value;
-            input.defaultValue = value;
+            input.value = field === 'memo' ? committedVal : value;
+            input.defaultValue = input.value;
             draftForDetail(task).worklog[idx][field] = task.worklog[idx][field];
             commitDetailRefresh();
             renderKanban();

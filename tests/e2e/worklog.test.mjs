@@ -47,6 +47,83 @@ async function change(page, selector, value) {
 }
 
 describe('task detail estimate and worklog', () => {
+  for (const [field, selector, typed, committed, savedLine] of [
+    ['estimate', '#taskDetailEstimate', '8h ', '8h', '**Estimate**: 8h\n'],
+    ['memo', '#taskDetailWorklog input[type="text"]', 'review ', 'review', '| 0h | review\n'],
+  ]) {
+    it(`trims ${field} only on Tab commit and saves a clean round trip`, async ({ page, dialogs }) => {
+      await setup(page);
+      if (field === 'memo') {
+        await page.click('#taskDetailWorklog > button');
+        await waitIdle(page);
+      }
+      assert.equal(await syncState(page), 'saved');
+      const original = await readFile(page, 'p', 'kanban.md');
+      const seen = dialogs.seen.length;
+      await page.fill(selector, typed);
+      assert.equal(await page.inputValue(selector), typed);
+      assert.equal(await page.evaluate(f => f === 'estimate' ? detailDraft.estimate : detailDraft.worklog[0].memo, field), typed);
+      assert.equal(await page.evaluate(f => f === 'estimate' ? tasks[0].estimate : tasks[0].worklog[0].memo, field), '');
+      assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+
+      await page.press(selector, 'Tab');
+      await waitIdle(page);
+      assert.deepEqual(dialogs.seen.slice(seen), [], 'normal commit must not alert');
+      assert.equal(await page.evaluate(f => f === 'estimate' ? tasks[0].estimate : tasks[0].worklog[0].memo, field), committed);
+      assert.equal(await page.inputValue(selector), committed);
+      assert.equal(await page.locator(selector).evaluate(el => el.defaultValue), committed);
+      assert.equal(await page.evaluate(f => f === 'estimate' ? detailDraft.estimate : detailDraft.worklog[0].memo, field), committed);
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+      assert.equal(await syncState(page), 'saved');
+      const saved = await readFile(page, 'p', 'kanban.md');
+      assert.ok(saved.includes(savedLine));
+      const roundTrip = await page.evaluate(text => {
+        const parsed = parseKanbanContent(text);
+        const serialized = generateKanbanContent(parsed.config, parsed.tasks);
+        const again = parseKanbanContent(serialized);
+        return {
+          problems: parsed.problems, againProblems: again.problems,
+          writeProblems: taskWriteProblems(parsed.tasks[0], parsed.config.columns),
+          serialized, stable: generateKanbanContent(again.config, again.tasks),
+          tasks: parsed.tasks, againTasks: again.tasks,
+        };
+      }, saved);
+      assert.deepEqual(roundTrip.problems, []);
+      assert.deepEqual(roundTrip.againProblems, []);
+      assert.deepEqual(roundTrip.writeProblems, []);
+      assert.deepEqual(roundTrip.againTasks, roundTrip.tasks);
+      assert.equal(roundTrip.serialized, saved);
+      assert.equal(roundTrip.stable, saved);
+
+      await page.evaluate(() => closeModal());
+      await openFolder(page, 'p');
+      await page.click('[data-task-id="TASK-001"] .task-title');
+      assert.equal(await page.inputValue(selector), committed);
+      assert.equal(await page.evaluate(f => f === 'estimate' ? tasks[0].estimate : tasks[0].worklog[0].memo, field), committed);
+      assert.deepEqual(dialogs.seen.slice(seen), []);
+    });
+  }
+
+  it('still refuses an estimate that cannot round-trip after trimming on a clean board', async ({ page, dialogs }) => {
+    await setup(page);
+    await change(page, '#taskDetailEstimate', '4h');
+    assert.equal(await syncState(page), 'saved');
+    const original = await readFile(page, 'p', 'kanban.md');
+    const writes = await page.evaluate(() => window.__mockFS.writeLog.length);
+    const seen = dialogs.seen.length;
+    await page.fill('#taskDetailEstimate', '8h | x ');
+    await page.press('#taskDetailEstimate', 'Tab');
+    await waitIdle(page);
+    assert.deepEqual(dialogs.seen.slice(seen).map(dialog => dialog.type), ['alert']);
+    assert.equal(await page.inputValue('#taskDetailEstimate'), '4h');
+    assert.equal(await page.evaluate(() => tasks[0].estimate), '4h');
+    assert.equal(await page.evaluate(() => detailDraft.estimate), '4h');
+    assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+    assert.equal(await syncState(page), 'saved');
+    assert.equal(await page.evaluate(() => window.__mockFS.writeLog.length), writes);
+    assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+  });
+
   it('commits the focused estimate before retrying a recovered read failure', async ({ page }) => {
     await setup(page);
     await change(page, '#taskDetailEstimate', '8h');
