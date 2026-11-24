@@ -497,9 +497,9 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Keep drafts focused: blur would commit them and a failed save could shift
-            // the banner buttons between mousedown and click. Exports include drafts.
-            for (const id of ['syncRetryBtn', 'syncDownloadBtn', 'syncCopyBtn', 'syncReloadBtn']) {
+            // Keep drafts focused for exports: blur could fail a save and shift the
+            // buttons before click. Retry and Reload retain normal blur/commit behavior.
+            for (const id of ['syncDownloadBtn', 'syncCopyBtn']) {
                 document.getElementById(id).addEventListener('mousedown', e => e.preventDefault());
             }
             document.getElementById('syncRetryBtn').addEventListener('click', retrySave);

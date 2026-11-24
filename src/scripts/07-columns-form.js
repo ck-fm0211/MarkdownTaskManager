@@ -291,7 +291,11 @@
             let board = tasks;
             if (isDetailDraftDirty()) {
                 board = tasks.map(task => task === detailDraft.task
-                    ? { ...task, estimate: detailDraft.estimate, worklog: detailDraft.worklog }
+                    ? {
+                        ...task, estimate: detailDraft.estimate,
+                        // Empty hours stay invalid in the draft, but exports must read back.
+                        worklog: detailDraft.worklog.map(log => ({ ...log, hours: Number.isFinite(log.hours) ? log.hours : 0 }))
+                    }
                     : task);
             }
             if (!isFormDirty()) return board;

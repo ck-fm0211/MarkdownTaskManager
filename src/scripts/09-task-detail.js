@@ -412,7 +412,7 @@
             draft.estimate = input.value;
             if (!canEditDetail() || worklogWriteRefused({ ...task, estimate: draft.estimate }, task.worklog || [])) {
                 draft.estimate = input.value = task.estimate || '';
-                commitDetailRefresh();
+                refreshDetailDraft();
                 return;
             }
             task.estimate = draft.estimate;
@@ -467,7 +467,7 @@
             if (!canEditDetail() || worklogWriteRefused(task, worklog)) {
                 draft.worklog[idx][field] = task.worklog[idx][field];
                 input.value = task.worklog[idx][field] ?? '';
-                commitDetailRefresh();
+                refreshDetailDraft();
                 return;
             }
             task.worklog = worklog.map(log => ({ ...log }));

@@ -47,6 +47,118 @@ async function change(page, selector, value) {
 }
 
 describe('task detail estimate and worklog', () => {
+  it('commits the focused estimate before retrying a recovered read failure', async ({ page }) => {
+    await setup(page);
+    await change(page, '#taskDetailEstimate', '8h');
+    try {
+      await setFault(page, 'p', 'kanban.md', { readFail: true });
+      await page.evaluate(() => toggleSubtask('TASK-001', 0));
+      await waitIdle(page);
+      assert.equal(await page.isVisible('#syncRetryBtn'), true);
+      assert.match(await readFile(page, 'p', 'kanban.md'), /\*\*Estimate\*\*: 8h\n/);
+      await setFault(page, 'p', 'kanban.md', { readDelay: 100 });
+      await page.fill('#taskDetailEstimate', '15h');
+      assert.equal(await page.locator('#taskDetailEstimate').evaluate(el => el === document.activeElement), true);
+      await page.click('#syncRetryBtn');
+      await waitIdle(page);
+      assert.match(await readFile(page, 'p', 'kanban.md'), /\*\*Estimate\*\*: 15h\n/);
+      assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+      assert.equal(await syncState(page), 'saved');
+    } finally {
+      await waitIdle(page);
+      await setFault(page, 'p', 'kanban.md', {});
+    }
+  });
+
+  for (const action of ['Copy', 'Download']) {
+    it(`exports empty draft hours as round-trippable 0h on ${action}`, async ({ page }) => {
+      await setup(page);
+      await page.click('#taskDetailWorklog > button');
+      await waitIdle(page);
+      await change(page, '#taskDetailWorklog input[type="number"]', '2');
+      const original = await readFile(page, 'p', 'kanban.md');
+      const selector = '#taskDetailWorklog input[type="number"]';
+      try {
+        await setFault(page, 'p', 'kanban.md', { readFail: true });
+        await page.evaluate(() => checkExternalChanges());
+        await page.fill(selector, '');
+        await page.waitForSelector(`#sync${action}Btn:visible`);
+        let exported;
+        if (action === 'Download') {
+          const [download] = await Promise.all([
+            page.waitForEvent('download', { timeout: 5000 }),
+            page.click('#syncDownloadBtn'),
+          ]);
+          exported = await readDownloadedFile(await download.path(), 'utf8');
+        } else {
+          await page.evaluate(() => navigator.clipboard.writeText(''));
+          await page.click('#syncCopyBtn');
+          await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('**Worklog**:'));
+          exported = await page.evaluate(() => navigator.clipboard.readText());
+        }
+        assert.match(exported, /\*\*Worklog\*\*:\n- \d{4}-\d{2}-\d{2} \| 0h\n/);
+        assert.doesNotMatch(exported, /NaNh/);
+        const roundTrip = await page.evaluate(text => {
+          const parsed = parseKanbanContent(text);
+          const again = parseKanbanContent(generateKanbanContent(parsed.config, parsed.tasks));
+          return { problems: parsed.problems, againProblems: again.problems, tasks: parsed.tasks, againTasks: again.tasks };
+        }, exported);
+        assert.deepEqual(roundTrip.problems, []);
+        assert.deepEqual(roundTrip.againProblems, []);
+        assert.deepEqual(roundTrip.againTasks, roundTrip.tasks);
+        assert.equal(roundTrip.tasks[0].worklog[0].hours, 0);
+        assert.equal(await page.inputValue(selector), '');
+        assert.equal(await page.evaluate(() => Number.isNaN(detailDraft.worklog[0].hours)), true);
+        assert.equal(await page.evaluate(() => tasks[0].worklog[0].hours), 2);
+        assert.equal(await page.evaluate(() => isDirty()), false);
+        assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+      } finally {
+        await waitIdle(page);
+        await setFault(page, 'p', 'kanban.md', {});
+      }
+    });
+  }
+
+  for (const [field, selector, invalid, reverted] of [
+    ['estimate', '#taskDetailEstimate', '8h | 概算', '8h'],
+    ['hours', '#taskDetailWorklog input[type="number"]', '', '2'],
+  ]) {
+    it(`clears stale rescue controls after refusing invalid ${field} on Tab`, async ({ page, dialogs }) => {
+      await setup(page);
+      await change(page, '#taskDetailEstimate', '8h');
+      await page.click('#taskDetailWorklog > button');
+      await waitIdle(page);
+      await change(page, '#taskDetailWorklog input[type="number"]', '2');
+      const original = await readFile(page, 'p', 'kanban.md');
+      try {
+        await setFault(page, 'p', 'kanban.md', { readFail: true });
+        await page.evaluate(() => checkExternalChanges());
+        const alerts = dialogs.seen.length;
+        await page.fill(selector, invalid);
+        assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+        assert.equal(await page.isVisible('#syncCopyBtn'), true);
+        assert.equal(await page.isVisible('#syncDownloadBtn'), true);
+        assert.ok((await page.textContent('#syncBannerDetail')).includes(await page.evaluate(() => t('sync.errorUnsavedHelp'))));
+        await page.press(selector, 'Tab');
+        await waitIdle(page);
+        assert.equal(dialogs.seen.length, alerts + 1);
+        assert.equal(await page.inputValue(selector), reverted);
+        for (const closeDetail of [false, true]) {
+          if (closeDetail) await page.evaluate(() => closeModal());
+          assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+          assert.equal(await page.isVisible('#syncCopyBtn'), false);
+          assert.equal(await page.isVisible('#syncDownloadBtn'), false);
+          assert.equal(await page.textContent('#syncBannerDetail'), '');
+          assert.equal(await syncState(page), 'error', 'the read error remains independently of the reverted draft');
+        }
+        assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+      } finally {
+        await waitIdle(page);
+        await setFault(page, 'p', 'kanban.md', {});
+      }
+    });
+  }
+
   for (const [label, selector, invalid, reverted] of [
     ['estimate with a pipe', '#taskDetailEstimate', '8h | 概算', '8h'],
     ['empty worklog hours', '#taskDetailWorklog input[type="number"]', '', '2'],
