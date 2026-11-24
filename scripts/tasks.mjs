@@ -175,6 +175,9 @@ if (cmd === 'where') {
     console.error(`[停止] 対象フォルダー ${visible(dir)} に必須の kanban.md が見つかりません。`);
     process.exit(1);
   }
+  // These pre-aggregation guards are order-sensitive: a blank kanban.md parses to a valid
+  // 0-task result (k is non-null, no problems), so keep this check before the duplicate-id
+  // and parse-problem checks to prevent an archive-only aggregate from running.
   if (kanbanText !== null && kanbanText.trim() === '') {
     console.error(`[停止] 対象フォルダー ${visible(dir)} の kanban.md が空です。ファイルが破損している可能性があるため、集計できません。`);
     process.exit(1);
