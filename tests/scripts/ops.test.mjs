@@ -121,6 +121,20 @@ describe('tasks worklog', () => {
     assert.match(r.out, /解析できない Estimate が 1 件あります/);
   });
 
+  test('period suppresses invalid estimate notes for tasks without worklog while category keeps them', (t) => {
+    const dir = fixture(t);
+    const p = join(dir, 'kanban.md');
+    // TASK-004 has no worklog, so its invalid estimate contributes no period data.
+    writeFileSync(p, readFileSync(p, 'utf8').replace('**Estimate**: 1\n', '**Estimate**: 1 day\n'));
+    const period = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'period', '--dir', dir]);
+    assert.equal(period.code, 0, period.out);
+    assert.match(period.out, /\| TOTAL \| 10\.25 \|/);
+    assert.doesNotMatch(period.out, /解析できない Estimate/);
+    const category = node(ROOT, 'scripts/tasks.mjs', ['worklog', '--by', 'category', '--dir', dir]);
+    assert.equal(category.code, 0, category.out);
+    assert.match(category.out, /解析できない Estimate が 1 件あります/);
+  });
+
   test('empty scope or empty date range produces a clear message or just CSV headers', (t) => {
     const dir = fixture(t);
     for (const extra of [['--from', '2027-01-01'], []]) {

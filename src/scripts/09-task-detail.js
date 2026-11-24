@@ -216,7 +216,7 @@
 
         function closeModal() {
             detailDraft = null;
-            updateSyncIndicator();
+            refreshSyncUi();
             document.getElementById('taskModal').classList.remove('active');
             if (wasArchiveModalActive) {
                 document.getElementById('archiveModal').classList.add('active');

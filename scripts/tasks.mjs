@@ -258,7 +258,7 @@ if (cmd === 'where') {
       for (const values of [headers, headers.map(() => '---'), ...rows]) console.log(`| ${values.map(escape).join(' | ')} |`);
     }
     if (by === 'user' || by === 'tag') console.log('\n注: 複数所属のタスクは各グループに全量を計上するため、小計の合計が TOTAL を超える場合があります。');
-    if (invalidEstimates) console.log(`\n注: 解析できない Estimate が ${invalidEstimates} 件あります（合計から除外）`);
+    if (!period && invalidEstimates) console.log(`\n注: 解析できない Estimate が ${invalidEstimates} 件あります（合計から除外）`);
   }
 } else {
   console.error(`不明なコマンド: ${cmd}（where | check | next-id | show <ID> | worklog）`);
