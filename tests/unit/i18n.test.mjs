@@ -18,6 +18,25 @@ test('Japanese covers every English key', () => {
   assert.deepEqual(missing, []);
 });
 
+test('Estimate and Worklog UI labels exist in every shipped locale', () => {
+  const required = [
+    'taskForm.estimateLabel',
+    'taskForm.worklogLabel',
+    'taskForm.worklogDateLabel',
+    'taskForm.worklogHoursLabel',
+    'taskForm.worklogMemoLabel',
+    'taskForm.worklogTotalLabel',
+    'taskForm.worklogAdd',
+    'taskForm.worklogDelete',
+  ];
+
+  for (const locale of ['en', 'ja', 'fr', 'de', 'zh_cn']) {
+    for (const key of required) {
+      assert.equal(typeof translations[locale][key], 'string', `${locale}.${key} must exist`);
+    }
+  }
+});
+
 test('every t("key") used in the sources exists in English', () => {
   const code = readdirSync(join(root, 'src', 'scripts')).map((f) => readFileSync(join(root, 'src', 'scripts', f), 'utf8')).join('\n');
   const used = new Set([...code.matchAll(/\bt\(\s*'([a-zA-Z0-9_.-]+)'/g)].map((m) => m[1]).filter((k) => !k.endsWith('.')));

@@ -1,7 +1,28 @@
+        // Detail inputs are exportable drafts; only validated changes enter tasks[].
+        let detailDraft = null;
+
+        function resetDetailDraft(task) {
+            detailDraft = { task, estimate: task.estimate || '', worklog: (task.worklog || []).map(log => ({ ...log })) };
+            return detailDraft;
+        }
+
+        function draftForDetail(task) {
+            return detailDraft?.task === task ? detailDraft : resetDetailDraft(task);
+        }
+
+        function isDetailDraftDirty() {
+            return !!detailDraft && tasks.includes(detailDraft.task) && (
+                detailDraft.estimate !== (detailDraft.task.estimate || '') ||
+                JSON.stringify(detailDraft.worklog) !== JSON.stringify(detailDraft.task.worklog || [])
+            );
+        }
+
         // opts.rerender: refresh the open dialog (e.g. language change) keeping whether it shows an
         // archived task.
         function showTaskDetail(task, opts = {}) {
+            if (detailDraft?.task !== task) detailDraft = null;
             currentDetailTask = task;
+            const detailValues = detailDraft || task;
             const actions = document.getElementById('taskModalActions');
             const modal = document.getElementById('taskModal');
             const modalBody = document.getElementById('modalBody');
@@ -34,6 +55,9 @@
             // Get status name
             const statusColumn = config.columns.find(col => col.id === task.status);
             const statusName = statusColumn ? statusColumn.name : task.status;
+            const taskIdArg = escapeHtml(JSON.stringify(task.id));
+            const worklog = detailValues.worklog || [];
+            const actualTotal = Number(worklog.reduce((sum, log) => sum + (Number(log.hours) || 0), 0).toFixed(2));
 
             modalBody.innerHTML = `
                 <div style="padding: 1.5rem;">
@@ -149,6 +173,32 @@
                         ` : ''}
                     </div>
 
+                    <!-- Estimate and Worklog -->
+                    <div style="margin-bottom: 1.5rem;">
+                        <label for="taskDetailEstimate" style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-weight: 600;">${escapeHtml(t('taskForm.estimateLabel'))}</label>
+                        ${wasArchiveModalActive
+                            ? `<div>${escapeHtml(detailValues.estimate || '')}</div>`
+                            : `<input type="text" id="taskDetailEstimate" value="${escapeHtml(detailValues.estimate || '')}" title="${escapeHtml(t('taskForm.estimateHint'))}" oninput="inputEstimate(${taskIdArg})" onchange="setEstimate(${taskIdArg})" style="padding: 0.5rem; border: 2px solid var(--border, #cbd5e0); border-radius: 4px; background: var(--bg); color: var(--text);">`}
+                    </div>
+                    <div id="taskDetailWorklog" style="margin-bottom: 1.5rem;">
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem; font-weight: 600;">${escapeHtml(t('taskForm.worklogLabel'))}</div>
+                        <ul style="list-style: none; padding: 0; margin: 0 0 1rem 0;">
+                            ${worklog.map((log, idx) => `
+                                <li style="padding: 0.5rem; margin-bottom: 0.25rem; background: var(--bg); border-radius: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                                    ${wasArchiveModalActive
+                                        ? `<span>${escapeHtml(log.date)} | ${escapeHtml(String(log.hours))}h${log.memo ? ` | ${escapeHtml(log.memo)}` : ''}</span>`
+                                        : `
+                                        <input type="date" value="${escapeHtml(log.date)}" aria-label="${escapeHtml(t('taskForm.worklogDateLabel'))}" oninput="inputWorklog(${taskIdArg}, ${idx}, 'date', this.value)" onchange="updateWorklog(${taskIdArg}, ${idx}, 'date', this.value)" style="padding: 0.5rem; background: var(--bg); color: var(--text); border: 1px solid var(--border, #cbd5e0); border-radius: 4px;">
+                                        <input type="number" min="0" step="0.25" value="${escapeHtml(String(log.hours))}" aria-label="${escapeHtml(t('taskForm.worklogHoursLabel'))}" oninput="inputWorklog(${taskIdArg}, ${idx}, 'hours', this.value)" onchange="updateWorklog(${taskIdArg}, ${idx}, 'hours', this.value)" style="width: 6rem; padding: 0.5rem; background: var(--bg); color: var(--text); border: 1px solid var(--border, #cbd5e0); border-radius: 4px;">
+                                        <input type="text" value="${escapeHtml(log.memo || '')}" aria-label="${escapeHtml(t('taskForm.worklogMemoLabel'))}" oninput="inputWorklog(${taskIdArg}, ${idx}, 'memo', this.value)" onchange="updateWorklog(${taskIdArg}, ${idx}, 'memo', this.value)" style="flex: 1; min-width: 6rem; padding: 0.5rem; background: var(--bg); color: var(--text); border: 1px solid var(--border, #cbd5e0); border-radius: 4px;">
+                                        <button onclick="deleteWorklog(${taskIdArg}, ${idx})" title="${escapeHtml(t('taskForm.worklogDelete'))}" aria-label="${escapeHtml(t('taskForm.worklogDelete'))}" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1.1rem; padding: 0.25rem;">🗑️</button>`}
+                                </li>
+                            `).join('')}
+                        </ul>
+                        ${!wasArchiveModalActive ? `<button class="btn btn-primary" onclick="addWorklog(${taskIdArg})">${escapeHtml(t('taskForm.worklogAdd'))}</button>` : ''}
+                        <div id="taskDetailWorklogTotal" style="margin-top: 0.5rem; font-weight: 600;">${escapeHtml(t('taskForm.worklogTotalLabel'))}: ${actualTotal}h</div>
+                    </div>
+
                     <!-- Notes -->
                     ${task.notes ? `
                         <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #e2e8f0;">
@@ -165,6 +215,8 @@
         }
 
         function closeModal() {
+            detailDraft = null;
+            refreshSyncUi();
             document.getElementById('taskModal').classList.remove('active');
             if (wasArchiveModalActive) {
                 document.getElementById('archiveModal').classList.add('active');
@@ -311,6 +363,137 @@
                 renderKanban();
                 persistKanban();
             }
+        }
+
+        function worklogWriteRefused(task, worklog) {
+            const problems = taskWriteProblems({ ...task, worklog }, config.columns);
+            if (!problems.length) return false;
+            alert(t('alert.cannotWriteTask', { details: problemSummary(problems) }));
+            return true;
+        }
+
+        function updateWorklogTotal(task) {
+            const total = document.getElementById('taskDetailWorklogTotal');
+            const hours = Number((task.worklog || []).reduce((sum, log) => sum + (Number(log.hours) || 0), 0).toFixed(2));
+            if (total) total.textContent = `${t('taskForm.worklogTotalLabel')}: ${hours}h`;
+        }
+
+        // Like the task form, keep edits in memory during a conflict so export and the leave
+        // guard include them. Read-only files and running exclusive operations still refuse edits.
+        function canEditDetail() {
+            return (!!session?.conflict && !busyOperation && !session.blocked.kanban) || guardWritable();
+        }
+
+        function refreshDetailDraft() {
+            updateWorklogTotal(detailDraft);
+            refreshSyncUi();
+        }
+
+        // A blur commit may happen during an export-button click. Keep the banner stable
+        // through mouseup; typing and the save result refresh its buttons separately.
+        function commitDetailRefresh() {
+            updateWorklogTotal(detailDraft || currentDetailTask);
+            updateSyncIndicator();
+        }
+
+        function inputEstimate(taskId) {
+            const task = findActiveTask(taskId);
+            const input = document.getElementById('taskDetailEstimate');
+            if (!task || wasArchiveModalActive || !input || !canEditDetail()) return;
+            draftForDetail(task).estimate = input.value;
+            refreshDetailDraft();
+        }
+
+        function setEstimate(taskId) {
+            const task = findActiveTask(taskId);
+            const input = document.getElementById('taskDetailEstimate');
+            if (!task || wasArchiveModalActive || !input) return;
+            const draft = draftForDetail(task);
+            draft.estimate = input.value;
+            const estimate = input.value.trim();
+            if (!canEditDetail() || worklogWriteRefused({ ...task, estimate }, task.worklog || [])) {
+                draft.estimate = input.value = task.estimate || '';
+                refreshDetailDraft();
+                return;
+            }
+            task.estimate = estimate;
+            input.value = input.defaultValue = estimate;
+            draftForDetail(task).estimate = estimate;
+            commitDetailRefresh();
+            renderKanban();
+            persistKanban();
+        }
+
+        function addWorklog(taskId) {
+            const task = findActiveTask(taskId);
+            if (!task || wasArchiveModalActive || !guardWritable()) return;
+            const worklog = draftForDetail(task).worklog.map(log => ({ ...log }))
+                .concat([{ date: localDateString(), hours: 0, memo: '' }]);
+            if (worklogWriteRefused(task, worklog)) return;
+            task.worklog = worklog;
+            resetDetailDraft(task);
+            currentDetailTask = task;
+            showTaskDetail(task);
+            renderKanban();
+            persistKanban();
+        }
+
+        function worklogInput(idx, field) {
+            const type = { date: 'date', hours: 'number', memo: 'text' }[field];
+            return document.querySelector(`#taskDetailWorklog li:nth-child(${idx + 1}) input[type="${type}"]`);
+        }
+
+        function worklogValue(field, value) {
+            return field === 'hours' ? (String(value).trim() === '' ? NaN : Number(value)) : value;
+        }
+
+        function inputWorklog(taskId, idx, field, value) {
+            const task = findActiveTask(taskId);
+            if (!task || wasArchiveModalActive || !task.worklog?.[idx] || !['date', 'hours', 'memo'].includes(field) || !canEditDetail()) return;
+            draftForDetail(task).worklog[idx][field] = worklogValue(field, value);
+            refreshDetailDraft();
+        }
+
+        function updateWorklog(taskId, idx, field, value) {
+            const task = findActiveTask(taskId);
+            if (!task || wasArchiveModalActive || !task.worklog?.[idx] || !['date', 'hours', 'memo'].includes(field)) return;
+            const input = worklogInput(idx, field);
+            if (!input) return;
+            const draft = draftForDetail(task);
+            draft.worklog[idx][field] = worklogValue(field, value);
+            // Validate only this field against committed values, never another pending input.
+            const committedVal = field === 'memo'
+                ? String(value).replace(/[\r\n\u0085\u2028\u2029]/g, ' ').trim()
+                : worklogValue(field, value);
+            const worklog = task.worklog.map((log, i) => i === idx
+                ? { ...log, [field]: committedVal }
+                : { ...log });
+            if (!canEditDetail() || worklogWriteRefused(task, worklog)) {
+                draft.worklog[idx][field] = task.worklog[idx][field];
+                input.value = task.worklog[idx][field] ?? '';
+                refreshDetailDraft();
+                return;
+            }
+            task.worklog = worklog.map(log => ({ ...log }));
+            input.value = field === 'memo' ? committedVal : value;
+            input.defaultValue = input.value;
+            draftForDetail(task).worklog[idx][field] = task.worklog[idx][field];
+            commitDetailRefresh();
+            renderKanban();
+            persistKanban();
+        }
+
+        function deleteWorklog(taskId, idx) {
+            const task = findActiveTask(taskId);
+            if (!task || wasArchiveModalActive || !task.worklog?.[idx] || !guardWritable()) return;
+            const worklog = draftForDetail(task).worklog.filter((_, i) => i !== idx).map(log => ({ ...log }));
+            if (worklogWriteRefused(task, worklog)) return;
+            task.worklog = worklog;
+            resetDetailDraft(task);
+            currentDetailTask = task;
+            showTaskDetail(task);
+            renderKanban();
+            persistKanban();
         }
 
         // Handle task form submission (create or edit)

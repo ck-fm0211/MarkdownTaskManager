@@ -58,9 +58,9 @@
             return !!s && s.editSeq !== s.savedSeq;
         }
 
-        // Unsaved work of any kind: board changes not on disk yet, or a task form with typed changes.
+        // Unsaved work of any kind: board changes not on disk yet, or typed changes in a task form / detail view.
         function hasUnsavedWork(s = session) {
-            return isDirty(s) || (!!s && isFormDirty());
+            return isDirty(s) || (!!s && (isFormDirty() || isDetailDraftDirty()));
         }
 
         function fileLabel(which) {
@@ -393,6 +393,11 @@
 
         // ----- Status indicator & banner -----
 
+        function refreshSyncUi() {
+            if (session && session.lastError) renderSyncBanner();
+            else updateSyncIndicator();
+        }
+
         function updateSyncIndicator() {
             const el = document.getElementById('syncStatus');
             if (!el) return;
@@ -403,7 +408,7 @@
                 else if (s.conflict) { state = 'conflict'; label = t('sync.statusConflict'); }
                 else if (pendingWrites > 0 || busyOperation) { state = 'saving'; label = t('sync.statusSaving'); }
                 else if (s.lastError) { state = 'error'; label = t('sync.statusError'); }
-                else if (isDirty(s)) { state = 'dirty'; label = t('sync.statusUnsaved'); }
+                else if (hasUnsavedWork(s)) { state = 'dirty'; label = t('sync.statusUnsaved'); }
                 else { state = 'saved'; label = t('sync.statusSaved'); }
             }
             el.dataset.state = state;
@@ -448,9 +453,11 @@
                 text = t('sync.error.' + s.lastError.kind, { file: fileLabel(s.lastError.which) });
                 // 'refused': the same content would be refused again, so no "Retry"; the help says what to do.
                 const refused = s.lastError.kind === 'refused';
-                const help = !isDirty(s) ? '' : refused ? t('sync.refusedHelp') : t('sync.errorUnsavedHelp');
+                const exportable = hasUnsavedWork(s);
+                const canRetry = isDirty(s) && !refused;
+                const help = !exportable ? '' : refused ? t('sync.refusedHelp') : t('sync.errorUnsavedHelp');
                 detail = [problemSummary(s.lastError.problems), help].filter(Boolean).join('\n\n');
-                show = !isDirty(s) ? ['reload'] : refused ? ['download', 'copy', 'reload'] : ['retry', 'download', 'copy', 'reload'];
+                show = exportable ? (canRetry ? ['retry', 'download', 'copy', 'reload'] : ['download', 'copy', 'reload']) : ['reload'];
             } else if (s && s.blocked.archive) {
                 kind = 'warning';
                 text = t('sync.blockedArchive');
@@ -490,6 +497,11 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            // Keep drafts focused for exports and discard: blur could commit a draft
+            // before reload confirms discarding it. Retry retains normal blur/commit behavior.
+            for (const id of ['syncDownloadBtn', 'syncCopyBtn', 'syncReloadBtn']) {
+                document.getElementById(id).addEventListener('mousedown', e => e.preventDefault());
+            }
             document.getElementById('syncRetryBtn').addEventListener('click', retrySave);
             document.getElementById('syncDownloadBtn').addEventListener('click', downloadUnsaved);
             document.getElementById('syncCopyBtn').addEventListener('click', copyUnsaved);

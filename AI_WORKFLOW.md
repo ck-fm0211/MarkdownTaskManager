@@ -15,12 +15,17 @@ This file contains general guidelines for all AI assistants (Claude, ChatGPT, Co
 **Priority**: [Value] | **Category**: [Value] | **Assigned**: @user1, @user2
 **Created**: YYYY-MM-DD | **Started**: YYYY-MM-DD | **Due**: YYYY-MM-DD | **Finished**: YYYY-MM-DD
 **Tags**: #tag1 #tag2 #tag3
+**Estimate**: 8h
 
 Free text description. **NO `##` or `###` headings allowed**.
 
 **Subtasks**:
 - [ ] First subtask
 - [x] Completed subtask
+
+**Worklog**:
+- 2026-11-20 | 2h | 設計レビュー
+- 2026-11-23 | 1.5h
 
 **Notes**:
 Additional notes with subsections `**Title**:`.
@@ -36,7 +41,16 @@ What was done.
 
 **REQUIRED**: `### TASK-XXX |`, `**Status**:` (the column id — this is what places the task in a column), `**Priority**:`, `**Category**:`, `**Created**:`
 
-**OPTIONAL**: `**Assigned**:`, `**Started**:`, `**Due**:`, `**Finished**:`, `**Tags**:`, Description, `**Subtasks**:`, `**Notes**:`
+**OPTIONAL**: `**Assigned**:`, `**Started**:`, `**Due**:`, `**Finished**:`, `**Tags**:`, `**Estimate**:`, Description, `**Subtasks**:`, `**Worklog**:`, `**Notes**:`
+
+`**Estimate**:` is a single free-text value on one line in the head metadata (e.g. `8h`, `2d`, `約3日`);
+an empty value means no field. It must NOT contain `|` (pipe), just like `**Category**:` and
+`**Assigned**:`: `|` separates metadata fields, so using it inside the value turns the remainder into
+a broken field and the app opens the board read-only. For multiple estimates, keep the field to one
+value and put the details in the description or `**Notes**:`.
+`**Worklog**:` rows use `- YYYY-MM-DD | <hours>h | <memo>`, where hours is an integer or decimal
+and the memo (including its preceding `|`) is optional. The actual total is the sum of all rows' hours.
+Write `**Worklog**:` after `**Subtasks**:` and BEFORE `**Notes**:` — everything after `**Notes**:` is notes.
 
 ### ❌ FORBIDDEN
 
@@ -202,7 +216,7 @@ The browser app (`task-manager.html`) and AI assistants edit the same files.
   NUL character (see "No NUL characters" below), then run it again.
   Updating `<!-- Config: Last Task ID: N -->` is recommended but the app also skips used ids.
 - Keep the block order: header line, `**Status**`/metadata lines, description, `**Subtasks**:`,
-  `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is
+  `**Worklog**:`, `**Links**`/`**Review**`/`**Dependencies**`, and `**Notes**:` LAST — everything after `**Notes**:` is
   notes (a `**Subtasks**:` written after it is not a subtask list). No `## ` headings after `## Tasks`.
   Close every ```` ``` ```` / `~~~` code block inside the task where it starts (an unclosed block makes
   the board read-only; a `### TASK-` line inside a code block would otherwise become a separate task).

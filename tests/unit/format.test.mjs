@@ -187,6 +187,242 @@ test('inline Notes text is kept', () => {
   assert.deepEqual(plain(a.problems), []);
 });
 
+test('Estimate and Worklog round-trip without changing their meaning', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | 実装
+**Status**: todo
+**Estimate**: 8h
+
+説明
+
+**Subtasks**:
+- [ ] 実装する
+
+**Worklog**:
+- 2026-11-20 | 2.5h | 調査
+- 2026-11-21 | 3h | 実装
+
+**Notes**:
+完了条件を確認
+`;
+  const a = F.parseKanbanContent(md);
+  assert.deepEqual(plain(a.problems), []);
+  assert.equal(a.tasks[0].estimate, '8h');
+  assert.deepEqual(plain(a.tasks[0].worklog), [
+    { date: '2026-11-20', hours: 2.5, memo: '調査' },
+    { date: '2026-11-21', hours: 3, memo: '実装' }
+  ]);
+
+  const generated = F.generateKanbanContent(a.config, a.tasks);
+  const b = F.parseKanbanContent(generated);
+  assert.deepEqual(plain(b.tasks), plain(a.tasks));
+  assert.ok(generated.indexOf('**Subtasks**:') < generated.indexOf('**Worklog**:'));
+  assert.ok(generated.indexOf('**Worklog**:') < generated.indexOf('**Notes**:'));
+});
+
+test('colon-less Worklog headings remain description text and round-trip exactly', () => {
+  for (const heading of ['**Worklog**', '**worklog**  ', '**Worklog** without a colon']) {
+    const body = `**Status**: todo\n\nDescription\n${heading}\n\n`;
+    const md = `### TASK-001 | Description\n${body}`;
+    const task = F.parseTask('TASK-001', 'Description', body, 'todo');
+    assert.equal(task.description, `Description\n${heading}`);
+    assert.deepEqual(plain(task.worklog), []);
+    assert.equal(F.serializeTask(task), md);
+    assert.deepEqual(plain(F.findLostLines(body, task)), []);
+    assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+    assert.deepEqual(plain(F.findLostLines(body, { ...task, description: 'Description' })), [heading.trim()]);
+  }
+});
+
+test('colon-less Worklog heading in an extra section is preserved', () => {
+  const body = '**Status**: todo\n\n**Links**:\nhttps://example.com\n**Worklog**\n\n';
+  const task = F.parseTask('TASK-001', 'Links', body, 'todo');
+  assert.equal(task.extra, '**Links**:\nhttps://example.com\n**Worklog**');
+  assert.equal(F.serializeTask(task), `### TASK-001 | Links\n${body}`);
+  assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+});
+
+test('colon-less Subtasks after Review round-trips as exactly one subtask', () => {
+  const body = '**Status**: todo\n\n**Review**:\n**Subtasks**\n- [ ] 確認\n\n';
+  const board = `# B\n<!-- Format: v2 -->\n\n## Tasks\n\n### TASK-001 | Review\n${body}`;
+  const parsed = F.parseKanbanContent(board);
+  assert.equal(parsed.tasks.length, 1);
+  const task = parsed.tasks[0];
+  assert.deepEqual(plain(task.subtasks), [{ completed: false, text: '確認' }]);
+  assert.equal(task.extra, '**Review**:');
+  assert.deepEqual(plain(parsed.problems), []);
+  assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+
+  // Serialization normalizes the heading and section order, without duplicating the item.
+  const serialized = F.serializeTask(task);
+  assert.equal(serialized, '### TASK-001 | Review\n**Status**: todo\n\n**Subtasks**:\n- [ ] 確認\n\n**Review**:\n\n');
+  const generated = F.generateKanbanContent(parsed.config, parsed.tasks);
+  const again = F.parseKanbanContent(generated);
+  assert.deepEqual(plain(again.tasks), plain(parsed.tasks));
+  assert.deepEqual(plain(again.problems), []);
+  assert.deepEqual(plain(F.taskWriteProblems(again.tasks[0])), []);
+  assert.equal(F.serializeTask(again.tasks[0]), serialized);
+  assert.equal(F.generateKanbanContent(again.config, again.tasks), generated);
+});
+
+for (const section of ['Review', 'Links', 'Dependencies']) {
+  for (const [name, content] of [
+    ['Estimate with a reason', '**Estimate**: 暫定2日\n要件が未確定のためです。'],
+    ['lowercase estimate', '**estimate**: x'],
+    ['trailing empty Estimate', '**Estimate**:']
+  ]) {
+    test(`${name} in ${section} is preserved verbatim without becoming head metadata`, () => {
+      for (const headEstimate of ['', '8h']) {
+        const extra = `**${section}**:\n${content}`;
+        const body = `**Status**: todo\n${headEstimate ? `**Estimate**: ${headEstimate}\n` : ''}\n${extra}\n\n`;
+        const md = `### TASK-001 | ${section}\n${body}`;
+        const parsed = F.parseKanbanContent(`# B\n<!-- Format: v2 -->\n\n## Tasks\n\n${md}`);
+        const task = parsed.tasks[0];
+        assert.equal(task.estimate, headEstimate);
+        assert.equal(task.extra, extra);
+        assert.equal(F.serializeTask(task), md);
+        assert.deepEqual(plain(parsed.problems), []);
+        assert.deepEqual(plain(F.findLostLines(body, task)), []);
+        assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+
+        task.title = 'Edited title';
+        const serialized = F.serializeTask(task);
+        assert.equal(serialized, `### TASK-001 | Edited title\n${body}`);
+        const again = F.parseTask('TASK-001', task.title, serialized.slice(serialized.indexOf('\n') + 1), 'todo');
+        assert.equal(again.estimate, headEstimate);
+        assert.equal(again.extra, extra);
+        assert.equal(F.serializeTask(again), serialized);
+        assert.deepEqual(plain(F.taskWriteProblems(again)), []);
+      }
+    });
+  }
+
+  test(`colon-less Estimate in ${section} round-trips with its following reason`, () => {
+    const extra = `**${section}**:\n**Estimate** は暫定です\n要件が未確定のためです。`;
+    const body = `**Status**: todo\n**Estimate**: 8h\n\n${extra}\n\n`;
+    const md = `### TASK-001 | ${section}\n${body}`;
+    const task = F.parseTask('TASK-001', section, body, 'todo');
+    assert.equal(task.estimate, '8h');
+    assert.equal(task.extra, extra);
+    assert.equal(F.serializeTask(task), md);
+    assert.deepEqual(plain(F.findLostLines(body, task)), []);
+    assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+    const again = F.parseTask('TASK-001', section, F.serializeTask(task).slice(md.indexOf('\n') + 1), 'todo');
+    assert.equal(again.extra, extra);
+    assert.equal(F.serializeTask(again), md);
+  });
+}
+
+test('Worklog section accepts ASCII and full-width colons', () => {
+  for (const colon of [':', '：']) {
+    const body = `**Status**: todo\n\n**Worklog** ${colon}\n- 2026-02-28 | 1.5h\n`;
+    const task = F.parseTask('TASK-001', 'Worklog', body, 'todo');
+    assert.equal(task.description, '');
+    assert.deepEqual(plain(task.worklog), [{ date: '2026-02-28', hours: 1.5, memo: '' }]);
+    assert.deepEqual(plain(F.taskWriteProblems(task)), []);
+  }
+});
+
+test('impossible Worklog dates warn with the task id while preserving the entry', () => {
+  for (const [id, date, invalid] of [['TASK-041', '2026-02-30', true], ['TASK-042', '2026-02-28', false]]) {
+    const taskText = `### ${id} | Worklog\n**Status**: todo\n\n**Worklog**:\n- ${date} | 1.5h\n\n`;
+    const board = `# B\n<!-- Format: v2 -->\n\n## ⚙️ Configuration\n\n**Columns**: To Do (todo)\n\n---\n\n## Tasks\n\n${taskText}`;
+    for (const parsed of [F.parseKanbanContent(board), F.parseArchiveContent(`# Task Archive\n\n## ✅ Archives\n\n${taskText}`)]) {
+      assert.deepEqual(plain(parsed.problems), []);
+      assert.deepEqual(plain(parsed.tasks[0].worklog), [{ date, hours: 1.5, memo: '' }]);
+      assert.equal(F.serializeTask(parsed.tasks[0]), taskText);
+      const warnings = parsed.warnings.filter(w => w.code === 'non-iso-date');
+      assert.deepEqual(plain(warnings), invalid ? [{ code: 'non-iso-date', lines: [`${id} Worklog: ${date}`] }] : []);
+    }
+  }
+});
+
+test('Worklog-looking text inside Notes is not parsed as worklog', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | メモ
+**Status**: todo
+
+**Notes**:
+実績の記録例:
+**Worklog**:
+- 2026-11-20 | 2.5h | これはメモ
+`;
+  const a = F.parseKanbanContent(md);
+  assert.deepEqual(plain(a.problems), []);
+  assert.deepEqual(plain(a.tasks[0].worklog), []);
+  assert.match(a.tasks[0].notes, /\*\*Worklog\*\*:/);
+  assert.match(a.tasks[0].notes, /これはメモ/);
+});
+
+test('empty Estimate and Worklog fields are omitted when serialized', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | 空欄
+**Status**: todo
+**Estimate**:
+
+**Worklog**:
+`;
+  const a = F.parseKanbanContent(md);
+  assert.equal(a.tasks[0].estimate, '');
+  assert.deepEqual(plain(a.tasks[0].worklog), []);
+  const generated = F.generateKanbanContent(a.config, a.tasks);
+  assert.doesNotMatch(generated, /\*\*Estimate\*\*\s*:/);
+  assert.doesNotMatch(generated, /\*\*Worklog\*\*\s*:/);
+  assert.deepEqual(plain(F.parseKanbanContent(generated).problems), []);
+});
+
+test('Worklog entries may omit the memo', () => {
+  const md = `# B
+<!-- Format: v2 -->
+
+## ⚙️ Configuration
+
+**Columns**: 📝 To Do (todo)
+
+---
+
+## Tasks
+
+### TASK-001 | メモ省略
+**Status**: todo
+
+**Worklog**:
+- 2026-11-20 | 2.5h
+`;
+  const a = F.parseKanbanContent(md);
+  assert.deepEqual(plain(a.tasks[0].worklog), [{ date: '2026-11-20', hours: 2.5, memo: '' }]);
+});
+
 test('task id search: full id, case, width, number', () => {
   const task = { id: 'TASK-042', title: 'x', description: '', notes: '', tags: [], assignees: [], subtasks: [] };
   for (const q of ['TASK-042', 'task-042', 'Task-042', 'ＴＡＳＫ－０４２', 'TASK-42', '#42', '042', ' TASK-042 ']) {

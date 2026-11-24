@@ -98,6 +98,8 @@
         }
 
         // Task edit/create modal
+        document.getElementById('newTaskForm').addEventListener('input', refreshSyncUi);
+
         function openTaskModal(task = null, defaultColumnId = null) {
             if (!guardWritable()) return;
             if (!task && !canCreateNewTask()) return;
@@ -284,19 +286,47 @@
             return applyTaskForm({ id, extra: '' }, { ...v, created: v.created || localDateString() });
         }
 
-        // tasks[] as shown, plus what is typed in an open form (used by the export of unsaved work).
+        // tasks[] plus detail / form drafts (only for exporting unsaved work; never regular saves).
         function boardWithOpenForm() {
-            if (!isFormDirty()) return tasks;
+            let board = tasks;
+            if (isDetailDraftDirty()) {
+                board = tasks.map(task => {
+                    if (task !== detailDraft.task) return task;
+                    // Export only restorable values without changing the in-progress draft.
+                    const isDigitDate = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d));
+                    const okHours = h => Number.isFinite(h) && h >= 0;
+                    const cleanMemo = m => String(m).replace(/[\r\n\u0085\u2028\u2029]/g, ' ').replace(/[\u0000]/g, '').trim();
+                    const safeWorklog = detailDraft.worklog.map((log, i) => {
+                        const committed = task.worklog[i] || { date: localDateString(), hours: 0, memo: '' };
+                        const draftDate = String(log.date).trim();
+                        const date = isDigitDate(draftDate) ? draftDate : (isDigitDate(committed.date) ? committed.date : localDateString());
+                        const hours = okHours(log.hours) ? log.hours : (okHours(committed.hours) ? committed.hours : 0);
+                        const memo = cleanMemo(log.memo);
+                        return { ...log, date, hours, memo };
+                    });
+                    const draftEstimate = String(detailDraft.estimate ?? '').trim();
+                    let safeEstimate = taskWriteProblems({ ...task, estimate: draftEstimate, worklog: safeWorklog }, config.columns).length === 0
+                        ? draftEstimate : (task.estimate || '');
+                    // The rescue export must round-trip, even if another field remains unrestorable.
+                    let safeWorklogFinal = safeWorklog;
+                    if (taskWriteProblems({ ...task, estimate: safeEstimate, worklog: safeWorklog }, config.columns).length) {
+                        safeWorklogFinal = task.worklog;
+                        if (taskWriteProblems({ ...task, estimate: safeEstimate, worklog: safeWorklogFinal }, config.columns).length) safeEstimate = task.estimate || '';
+                    }
+                    return { ...task, estimate: safeEstimate, worklog: safeWorklogFinal };
+                });
+            }
+            if (!isFormDirty()) return board;
             const v = readTaskForm();
             if (isEditMode && editingTask) {
                 const i = tasks.indexOf(editingTask);
-                const edited = applyTaskForm(editingTask, v);
-                if (i < 0) return tasks.concat([edited]);
-                const list = tasks.slice();
+                const edited = applyTaskForm(board[i] || editingTask, v);
+                if (i < 0) return board.concat([edited]);
+                const list = board.slice();
                 list[i] = edited;
                 return list;
             }
-            return tasks.concat([newTaskFromForm(v, formatTaskId(nextNewTaskNumber()))]);
+            return board.concat([newTaskFromForm(v, formatTaskId(nextNewTaskNumber()))]);
         }
 
         function closeTaskModal() {
@@ -307,6 +337,7 @@
             isEditMode = false;
             editingTask = null;
             taskFormSnapshot = null;
+            refreshSyncUi();
         }
 
         // × / Cancel: typed input is only thrown away after confirmation.
@@ -325,6 +356,7 @@
                     <button type="button" onclick="deleteFormSubtask(${idx})" title="${escapeHtml(t('tooltip.delete'))}" aria-label="${escapeHtml(t('tooltip.delete'))}" style="background: none; border: none; cursor: pointer; color: #e53e3e; font-size: 1rem;">🗑️</button>
                 </li>
             `).join('');
+            refreshSyncUi();
         }
 
         // Enter in the subtask field adds the subtask (as in the task detail view). Without this, Enter

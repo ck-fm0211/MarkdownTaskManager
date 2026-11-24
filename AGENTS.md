@@ -81,3 +81,13 @@
   実装する場合も、スキルは `.claude/skills/<名前>/SKILL.md` 等に置き、書き込み先は `dataDir`、
   ID は `npm run tasks -- next-id`、書き込み後は `npm run tasks -- check` という上記の手順に従うこと。
   実在しない連携やスキルを「ある」と説明しないこと。
+
+## 6. AI スキル（SSOT とラッパ）
+
+スキルの利用は任意です。データは各 SSOT に別途定めがない限り読み取り専用とし、動作は各 SSOT で定義します。
+
+| スキル | SSOT | ラッパ | 目的 |
+|---|---|---|---|
+| `task-history-explorer` | [docs/ai/skills/task-history-explorer.md](docs/ai/skills/task-history-explorer.md) | [.claude/skills/task-history-explorer/SKILL.md](.claude/skills/task-history-explorer/SKILL.md) | チケットの履歴・背景を調べてチャットに報告し、明示的な依頼時だけレポートを保存する。 |
+| `adr-from-tasks` | [docs/ai/skills/adr-from-tasks.md](docs/ai/skills/adr-from-tasks.md) | [.claude/skills/adr-from-tasks/SKILL.md](.claude/skills/adr-from-tasks/SKILL.md) | 選択チケットから MADR 4.0.0 の ADR を作成し、既定で元チケットの Notes に参照を追記する。 |
+| `worklog-aggregator` | [docs/ai/skills/worklog-aggregator.md](docs/ai/skills/worklog-aggregator.md) | [.claude/skills/worklog-aggregator/SKILL.md](.claude/skills/worklog-aggregator/SKILL.md) | 読み取り専用の CLI で Estimate と Worklog の実績を集計し、手計算せず出力をそのまま提示する。 |

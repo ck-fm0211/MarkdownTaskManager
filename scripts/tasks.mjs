@@ -4,6 +4,11 @@
 //   npm run tasks -- check                 形式チェック（保存で失われる行・重複ID・不明な Status）
 //   npm run tasks -- next-id               次に使うべきタスク ID（現役＋アーカイブの最大値 + 1）
 //   npm run tasks -- show TASK-042         そのタスクのブロックを表示（現役 / アーカイブ）
+//   npm run tasks -- worklog               現役＋アーカイブの Estimate / 実績を集計
+//     --by category|user|tag|period         集計軸（既定: category）
+//     --from YYYY-MM-DD --to YYYY-MM-DD    実績の日付範囲（両端を含む）
+//     --csv                               Markdown の代わりに CSV を出力
+//     --help                              集計条件の説明
 //   --dir <folder>                         dataDir の代わりに指定フォルダーを使う
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -12,6 +17,14 @@ import { loadFormat } from './lib/format.mjs';
 
 const args = process.argv.slice(2);
 const cmd = args[0] || 'check';
+if (cmd === 'worklog' && args.includes('--help')) {
+  console.log(`Usage: npm run tasks -- worklog [--dir <folder>] [--by category|user|tag|period] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--csv]
+現役＋アーカイブを集計します。既定の軸は category、日付範囲は全期間です（両端を含む）。
+日付指定時は範囲内に Worklog があるタスクだけを集計対象とし、その Estimate は全量を計上します（期間按分しません）。
+user/tag の複数所属タスクは各グループに全量を計上し、TOTAL には各タスクを一度だけ計上します。
+period は実績日の月別集計です。Estimate は日付がないため表示しません。`);
+  process.exit(0);
+}
 const di = args.indexOf('--dir');
 let dir = di >= 0 ? resolve(args[di + 1]) : null;
 if (!dir) {
@@ -51,16 +64,16 @@ const archived = a ? a.tasks : [];
 // NULs (e.g. of a UTF-16 file read as UTF-8, or in a task's text) are shown as "␀", never written to the terminal.
 const visible = (text) => String(text).replace(/\0/g, '\u2400');
 
-function printProblems(label, list) {
+function printProblems(label, list, print = console.log) {
   for (const p of list) {
     if (p.code === 'nul-char') {
       // Valid UTF-8 with a NUL (U+0000): saving again as UTF-8 does not remove it — say where it is.
-      console.log(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。␀ のすぐ隣の � は NUL で切れた文字の残りなので、それも削除してください（NUL のバイトだけを消すと壊れた文字が残り、「UTF-8 ではありません」と表示されます）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
-      (p.lines || []).forEach((l) => console.log(`      ${l}`));
+      print(`  ✗ ${label}: NUL 文字（U+0000。見えない制御文字。下では ␀ と表示）が ${p.line} 行目にあります（全 ${p.count} 個）。エディターで削除してください（UTF-8 で保存し直しても消えません）。␀ のすぐ隣の � は NUL で切れた文字の残りなので、それも削除してください（NUL のバイトだけを消すと壊れた文字が残り、「UTF-8 ではありません」と表示されます）。周りの文章が欠けている場合は OneDrive のバージョン履歴から戻してください。`);
+      (p.lines || []).forEach((l) => print(`      ${l}`));
       continue;
     }
-    console.log(`  ✗ ${label}: ${p.code}${p.id ? ' ' + p.id : ''}${p.section ? ' [' + p.section + ']' : ''}`);
-    (p.lines || []).slice(0, 8).forEach((l) => console.log(`      ${visible(l)}`));
+    print(`  ✗ ${label}: ${p.code}${p.id ? ' ' + p.id : ''}${p.section ? ' [' + p.section + ']' : ''}`);
+    (p.lines || []).slice(0, 8).forEach((l) => print(`      ${visible(l)}`));
   }
 }
 
@@ -131,7 +144,123 @@ if (cmd === 'where') {
   if (toFix) console.log(`${bad ? '' : '\n'}[NG] 重複した ID が ${toFix} 件あります。ブラウザーは警告を表示して通常どおり開きますが、ドラッグ移動などが別のタスクに作用するおそれがあるため、片方を修正してください。`);
   if (!bad && !toFix) console.log('\n[OK] ブラウザーで安全に読み書きできる形式です。');
   process.exit(bad || toFix ? 1 : 0);
+} else if (cmd === 'worklog') {
+  const option = (name, fallback = null) => {
+    const i = args.indexOf(name);
+    if (i < 0) return fallback;
+    if (!args[i + 1] || args[i + 1].startsWith('--')) {
+      console.error(`${name} の値を指定してください`);
+      process.exit(2);
+    }
+    return args[i + 1];
+  };
+  const by = option('--by', 'category');
+  const from = option('--from');
+  const to = option('--to');
+  if (!['category', 'user', 'tag', 'period'].includes(by)) {
+    console.error('--by は category | user | tag | period を指定してください');
+    process.exit(2);
+  }
+  for (const [name, value] of [['--from', from], ['--to', to]]) {
+    if (value !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !F.isIsoDate(value))) {
+      console.error(`${name} は実在する日付を YYYY-MM-DD で指定してください`);
+      process.exit(2);
+    }
+  }
+  if (from && to && from > to) {
+    console.error('--from は --to 以前の日付を指定してください');
+    process.exit(2);
+  }
+  if (!k) {
+    console.error(`[停止] 対象フォルダー ${visible(dir)} に必須の kanban.md が見つかりません。`);
+    process.exit(1);
+  }
+  // These pre-aggregation guards are order-sensitive: a blank kanban.md parses to a valid
+  // 0-task result (k is non-null, no problems), so keep this check before the duplicate-id
+  // and parse-problem checks to prevent an archive-only aggregate from running.
+  if (kanbanText !== null && kanbanText.trim() === '') {
+    console.error(`[停止] 対象フォルダー ${visible(dir)} の kanban.md が空です。ファイルが破損している可能性があるため、集計できません。`);
+    process.exit(1);
+  }
+  const dups = F.findDuplicateIds(active, archived);
+  if (dups.length) {
+    console.error(`[停止] 重複した ID: ${dups.join(', ')}。アーカイブ処理の中断が原因の可能性があります。集計前に重複を解消してください。`);
+    process.exit(1);
+  }
+  if (notUtf8.length || (k && k.problems.length) || (a && a.problems.length)) {
+    console.error('[停止] 入力ファイルを正しく解析できないため、集計できません。問題を修正してから実行してください（確認: npm run tasks -- check）。');
+    for (const label of notUtf8) console.error(`  ✗ ${label}: UTF-8 ではありません。UTF-8（BOM なし）で保存し直してください。`);
+    if (k) printProblems('kanban.md', k.problems, console.error);
+    if (a) printProblems('archive.md', a.problems, console.error);
+    process.exit(1);
+  }
+  let invalidWorklogDates = false;
+  for (const task of [...active, ...archived]) {
+    for (const entry of task.worklog || []) {
+      if (!F.isIsoDate(entry.date)) {
+        console.error(`[停止] ${visible(task.id)}: Worklog の日付 ${visible(entry.date)} は実在する YYYY-MM-DD ではありません。`);
+        invalidWorklogDates = true;
+      }
+    }
+  }
+  if (invalidWorklogDates) process.exit(1);
+  const csv = args.includes('--csv');
+  const period = by === 'period';
+  const headers = period ? ['Period', 'Actual(h)'] : ['Group', 'Estimate(h)', 'Actual(h)', 'Diff(h)'];
+  const formatHours = (n) => String(Number(n.toFixed(2)));
+  const parseEstimateHours = (s = '') => {
+    if (!s.trim()) return 0;
+    const match = s.match(/^\s*(\d+(?:\.\d+)?)\s*h?\s*$/i);
+    return match ? Number(match[1]) : null;
+  };
+  const groups = new Map();
+  const total = { estimate: 0, actual: 0 };
+  let invalidEstimates = 0;
+  const add = (key, estimate, actual) => {
+    if (!groups.has(key)) groups.set(key, { estimate: 0, actual: 0 });
+    const group = groups.get(key);
+    group.estimate += estimate;
+    group.actual += actual;
+  };
+  for (const task of [...active, ...archived]) {
+    const entries = (task.worklog || []).filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
+    if ((from || to) && !entries.length) continue;
+    const hasEstimate = (task.estimate || '').trim() !== '';
+    const hasWorklog = entries.length > 0;
+    if (!period && !hasEstimate && !hasWorklog) continue;
+    const actual = entries.reduce((sum, e) => sum + e.hours, 0);
+    const estimate = parseEstimateHours(task.estimate);
+    if (estimate === null) invalidEstimates++;
+    // Each task contributes once to TOTAL, independently of its number of groups.
+    total.estimate += estimate ?? 0;
+    total.actual += actual;
+    if (period) {
+      for (const entry of entries) add(entry.date.slice(0, 7), 0, entry.hours);
+    } else {
+      const keys = by === 'category' ? [task.category || '(none)']
+        : by === 'user' ? task.assignees : task.tags;
+      for (const key of new Set(keys?.length ? keys : ['(none)'])) add(key, estimate ?? 0, actual);
+    }
+  }
+  const row = (key, values) => period ? [key, formatHours(values.actual)]
+    : [key, formatHours(values.estimate), formatHours(values.actual), formatHours(values.actual - values.estimate)];
+  const rows = [...groups.keys()].sort().map((key) => row(key, groups.get(key)));
+  rows.push(row('TOTAL', total));
+  if (csv) {
+    const escape = (value) => /[,"\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+    // データなし（groups が空）の CSV はヘッダーのみ（TOTAL,0,0,0 は作らず）、Markdown は「実績データがありません」を表示します。
+    for (const values of [headers, ...(groups.size ? rows : [])]) console.log(values.map(escape).join(','));
+  } else {
+    console.log(`Worklog — ${by} (${from || '開始指定なし'} ～ ${to || '終了指定なし'})\n`);
+    if (!groups.size) console.log('実績データがありません');
+    else {
+      const escape = (value) => visible(value).replace(/\r?\n/g, '<br>').replace(/\|/g, '&#124;');
+      for (const values of [headers, headers.map(() => '---'), ...rows]) console.log(`| ${values.map(escape).join(' | ')} |`);
+    }
+    if (by === 'user' || by === 'tag') console.log('\n注: 複数所属のタスクは各グループに全量を計上するため、小計の合計が TOTAL を超える場合があります。');
+    if (!period && invalidEstimates) console.log(`\n注: 解析できない Estimate が ${invalidEstimates} 件あります（合計から除外）`);
+  }
 } else {
-  console.error(`不明なコマンド: ${cmd}（where | check | next-id | show <ID>）`);
+  console.error(`不明なコマンド: ${cmd}（where | check | next-id | show <ID> | worklog）`);
   process.exit(2);
 }
