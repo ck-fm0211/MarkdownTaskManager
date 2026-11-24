@@ -290,13 +290,14 @@
         function boardWithOpenForm() {
             let board = tasks;
             if (isDetailDraftDirty()) {
-                board = tasks.map(task => task === detailDraft.task
-                    ? {
-                        ...task, estimate: detailDraft.estimate,
-                        // Export only restorable rows without changing the in-progress draft.
-                        worklog: detailDraft.worklog.filter(log => isIsoDate(log.date) && Number.isFinite(log.hours) && log.hours >= 0)
-                    }
-                    : task);
+                board = tasks.map(task => {
+                    if (task !== detailDraft.task) return task;
+                    // Export only restorable values without changing the in-progress draft.
+                    const safeWorklog = detailDraft.worklog.filter(log => isIsoDate(log.date) && Number.isFinite(log.hours) && log.hours >= 0);
+                    const safeEstimate = taskWriteProblems({ ...task, estimate: detailDraft.estimate, worklog: safeWorklog }, config.columns).length === 0
+                        ? detailDraft.estimate : (task.estimate || '');
+                    return { ...task, estimate: safeEstimate, worklog: safeWorklog };
+                });
             }
             if (!isFormDirty()) return board;
             const v = readTaskForm();

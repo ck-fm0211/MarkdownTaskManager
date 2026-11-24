@@ -110,6 +110,75 @@ describe('task detail estimate and worklog', () => {
   });
 
   for (const action of ['Copy', 'Download']) {
+    for (const [committedEstimate, draftEstimate, memo, expectedEstimate] of [
+      ['', '8h | 再見積もり', '', ''],
+      ['4h', '8h | 再見積もり', '', '4h'],
+      ['', '8h', 'Unsaved worklog memo', '8h'],
+    ]) {
+      it(`rescues estimate ${JSON.stringify(draftEstimate)} over ${JSON.stringify(committedEstimate)} on ${action}`, async ({ page }) => {
+        await setup(page);
+        if (committedEstimate) await change(page, '#taskDetailEstimate', committedEstimate);
+        await page.evaluate(() => addWorklog('TASK-001'));
+        await waitIdle(page);
+        const original = await readFile(page, 'p', 'kanban.md');
+        const committed = await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog }));
+        try {
+          await setFault(page, 'p', 'kanban.md', { readFail: true });
+          await page.evaluate(() => checkExternalChanges());
+          await page.fill('#taskDetailEstimate', draftEstimate);
+          // Input events keep both fields in the draft without triggering blur/commit.
+          if (memo) await page.locator('#taskDetailWorklog input[type="text"]').evaluate((el, value) => {
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }, memo);
+          await page.waitForSelector(`#sync${action}Btn:visible`);
+          const draft = await page.evaluate(() => ({ estimate: detailDraft.estimate, worklog: detailDraft.worklog }));
+          let exported;
+          if (action === 'Download') {
+            const [download] = await Promise.all([
+              page.waitForEvent('download', { timeout: 5000 }),
+              page.click('#syncDownloadBtn'),
+            ]);
+            exported = await readDownloadedFile(await download.path(), 'utf8');
+          } else {
+            await page.evaluate(() => navigator.clipboard.writeText(''));
+            await page.click('#syncCopyBtn');
+            await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('## Tasks'));
+            exported = await page.evaluate(() => navigator.clipboard.readText());
+          }
+          assert.doesNotMatch(exported, /\*\*Estimate\*\*: 8h \| 再見積もり/);
+          const roundTrip = await page.evaluate(text => {
+            const parsed = parseKanbanContent(text);
+            const serialized = generateKanbanContent(parsed.config, parsed.tasks);
+            const again = parseKanbanContent(serialized);
+            return {
+              problems: parsed.problems, againProblems: again.problems,
+              serialized, stable: generateKanbanContent(again.config, again.tasks),
+              estimate: parsed.tasks[0].estimate,
+            };
+          }, exported);
+          assert.deepEqual(roundTrip.problems, []);
+          assert.deepEqual(roundTrip.againProblems, []);
+          assert.equal(roundTrip.serialized, exported);
+          assert.equal(roundTrip.stable, exported);
+          assert.equal(roundTrip.estimate, expectedEstimate);
+          if (memo) {
+            assert.match(exported, /\*\*Estimate\*\*: 8h\n/);
+            assert.ok(exported.includes(memo));
+          }
+          assert.equal(await page.inputValue('#taskDetailEstimate'), draftEstimate);
+          assert.deepEqual(await page.evaluate(() => ({ estimate: detailDraft.estimate, worklog: detailDraft.worklog })), draft);
+          assert.deepEqual(await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog })), committed);
+          assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+          assert.equal(await page.evaluate(() => isDirty()), false);
+          assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+        } finally {
+          await setFault(page, 'p', 'kanban.md', {});
+          await waitIdle(page);
+        }
+      });
+    }
+
     for (const [label, type, invalid] of [
       ['empty hours', 'number', ''],
       ['negative hours', 'number', '-5'],
@@ -226,39 +295,47 @@ describe('task detail estimate and worklog', () => {
       await waitIdle(page);
       await change(page, '#taskDetailWorklog input[type="number"]', '2');
       const committed = await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog }));
-      // Hold the first save at close, then queue a second one. The second save must
-      // serialize tasks AFTER oninput, rather than reuse content prepared before typing.
-      await page.evaluate(() => {
-        window.__mockFS.holdWrite('p', 'kanban.md');
-        toggleSubtask('TASK-001', 0);
-      });
-      await page.waitForFunction(() => window.__mockFS.isWriteHeld('p', 'kanban.md'));
-      await page.evaluate(() => toggleSubtask('TASK-001', 0));
-      const seq = await page.evaluate(() => session.editSeq);
-      await page.fill(selector, invalid);
-      assert.equal(await page.evaluate(() => session.editSeq), seq, 'input does not mark the committed board dirty');
-      assert.deepEqual(await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog })), committed);
-      assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
-      if (invalid) assert.ok((await page.evaluate(() => unsavedKanbanText())).includes(invalid));
-      await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.md'));
-      await waitIdle(page);
-      const written = await readFile(page, 'p', 'kanban.md');
-      assert.doesNotMatch(written, /8h \| 概算|NaNh/);
-      assert.match(written, /\*\*Estimate\*\*: 8h\n/);
-      assert.match(written, /\| 2h/);
-      assert.equal(await page.evaluate(() => isDirty()), false);
-      assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
-      assert.equal(await syncState(page), 'dirty', 'pending input must not be labelled saved');
-      const writes = await page.evaluate(() => window.__mockFS.writeLog.length);
-      const alerts = dialogs.seen.length;
-      await page.dispatchEvent(selector, 'change');
-      await waitIdle(page);
-      assert.equal(dialogs.seen.length, alerts + 1);
-      assert.equal(await page.inputValue(selector), reverted);
-      assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
-      assert.equal(await syncState(page), 'saved');
-      assert.equal(await page.evaluate(() => window.__mockFS.writeLog.length), writes, 'invalid commit must not persist');
-      assert.equal(await readFile(page, 'p', 'kanban.md'), written);
+      let writeHeld = false;
+      try {
+        // Hold the first save at close, then queue a second one. The second save must
+        // serialize tasks AFTER oninput, rather than reuse content prepared before typing.
+        await page.evaluate(() => {
+          window.__mockFS.holdWrite('p', 'kanban.md');
+          toggleSubtask('TASK-001', 0);
+        });
+        writeHeld = true;
+        await page.waitForFunction(() => window.__mockFS.isWriteHeld('p', 'kanban.md'));
+        await page.evaluate(() => toggleSubtask('TASK-001', 0));
+        const seq = await page.evaluate(() => session.editSeq);
+        await page.fill(selector, invalid);
+        assert.equal(await page.evaluate(() => session.editSeq), seq, 'input does not mark the committed board dirty');
+        assert.deepEqual(await page.evaluate(() => ({ estimate: tasks[0].estimate, worklog: tasks[0].worklog })), committed);
+        assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+        if (invalid) assert.ok(!(await page.evaluate(() => unsavedKanbanText())).includes(invalid));
+        await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.md'));
+        writeHeld = false;
+        await waitIdle(page);
+        const written = await readFile(page, 'p', 'kanban.md');
+        assert.doesNotMatch(written, /8h \| 概算|NaNh/);
+        assert.match(written, /\*\*Estimate\*\*: 8h\n/);
+        assert.match(written, /\| 2h/);
+        assert.equal(await page.evaluate(() => isDirty()), false);
+        assert.equal(await page.evaluate(() => hasUnsavedWork()), true);
+        assert.equal(await syncState(page), 'dirty', 'pending input must not be labelled saved');
+        const writes = await page.evaluate(() => window.__mockFS.writeLog.length);
+        const alerts = dialogs.seen.length;
+        await page.dispatchEvent(selector, 'change');
+        await waitIdle(page);
+        assert.equal(dialogs.seen.length, alerts + 1);
+        assert.equal(await page.inputValue(selector), reverted);
+        assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+        assert.equal(await syncState(page), 'saved');
+        assert.equal(await page.evaluate(() => window.__mockFS.writeLog.length), writes, 'invalid commit must not persist');
+        assert.equal(await readFile(page, 'p', 'kanban.md'), written);
+      } finally {
+        if (writeHeld) await page.evaluate(() => window.__mockFS.releaseWrite('p', 'kanban.md'));
+        await waitIdle(page);
+      }
     });
   }
 
