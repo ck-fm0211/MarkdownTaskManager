@@ -1,5 +1,6 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile as readDownloadedFile } from 'node:fs/promises';
 import {
   launchBrowser, newPage, createDir, openFolder, waitIdle, readFile, setFault, syncState, board, archive, task,
 } from './helpers.mjs';
@@ -243,6 +244,46 @@ describe('task detail estimate and worklog', () => {
       await page.waitForSelector('#syncDownloadBtn', { state: 'hidden' });
       await page.waitForSelector('#syncCopyBtn', { state: 'hidden' });
       assert.equal(await page.evaluate(() => hasUnsavedWork()), false);
+    });
+  }
+
+  for (const [field, selector, text] of [
+    ['worklog memo', '#taskDetailWorklog input[type="text"]', 'Rescue memo on the first click'],
+    ['estimate', '#taskDetailEstimate', '8h'],
+  ]) {
+    it(`downloads the ${field} on the first click after a delayed read failure`, async ({ page }) => {
+      await setup(page);
+      await page.evaluate(() => addWorklog('TASK-001'));
+      await waitIdle(page);
+      const original = await readFile(page, 'p', 'kanban.md');
+      try {
+        await setFault(page, 'p', 'kanban.md', { readFail: true, readDelay: 250 });
+        await page.evaluate(() => checkExternalChanges());
+        assert.deepEqual(await page.evaluate(() => session.lastError), { which: 'kanban', kind: 'read-failed' });
+        assert.equal(await page.isVisible('#syncDownloadBtn'), false);
+
+        await page.fill(selector, text);
+        await page.waitForSelector('#syncDownloadBtn:visible');
+        assert.equal(await page.isVisible('#syncCopyBtn'), true);
+        assert.equal(await page.locator(selector).evaluate(el => el === document.activeElement), true);
+        assert.equal(await page.evaluate(() => isDirty()), false);
+
+        // A real click blurs the input and commits it between mousedown and mouseup.
+        // Re-rendering the banner during that change used to swallow this first click.
+        const [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: 5000 }),
+          page.click('#syncDownloadBtn'),
+        ]);
+        assert.match(download.suggestedFilename(), /^kanban\.unsaved-\d{8}-\d{6}\.md$/);
+        const exported = await readDownloadedFile(await download.path(), 'utf8');
+        if (field === 'estimate') assert.match(exported, /\*\*Estimate\*\*: 8h\n/);
+        else assert.ok(exported.includes(text));
+        await waitIdle(page);
+        assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+      } finally {
+        await waitIdle(page);
+        await setFault(page, 'p', 'kanban.md', {});
+      }
     });
   }
 

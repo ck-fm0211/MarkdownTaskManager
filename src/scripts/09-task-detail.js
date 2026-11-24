@@ -389,6 +389,13 @@
             refreshSyncUi();
         }
 
+        // A blur commit may happen during an export-button click. Keep the banner stable
+        // through mouseup; typing and the save result refresh its buttons separately.
+        function commitDetailRefresh() {
+            updateWorklogTotal(detailDraft || currentDetailTask);
+            updateSyncIndicator();
+        }
+
         function inputEstimate(taskId) {
             const task = findActiveTask(taskId);
             const input = document.getElementById('taskDetailEstimate');
@@ -405,13 +412,13 @@
             draft.estimate = input.value;
             if (!canEditDetail() || worklogWriteRefused({ ...task, estimate: draft.estimate }, task.worklog || [])) {
                 draft.estimate = input.value = task.estimate || '';
-                refreshDetailDraft();
+                commitDetailRefresh();
                 return;
             }
             task.estimate = draft.estimate;
             input.defaultValue = task.estimate;
             draftForDetail(task).estimate = task.estimate;
-            refreshDetailDraft();
+            commitDetailRefresh();
             renderKanban();
             persistKanban();
         }
@@ -460,14 +467,14 @@
             if (!canEditDetail() || worklogWriteRefused(task, worklog)) {
                 draft.worklog[idx][field] = task.worklog[idx][field];
                 input.value = task.worklog[idx][field] ?? '';
-                refreshDetailDraft();
+                commitDetailRefresh();
                 return;
             }
             task.worklog = worklog.map(log => ({ ...log }));
             input.value = value;
             input.defaultValue = value;
             draftForDetail(task).worklog[idx][field] = task.worklog[idx][field];
-            refreshDetailDraft();
+            commitDetailRefresh();
             renderKanban();
             persistKanban();
         }
