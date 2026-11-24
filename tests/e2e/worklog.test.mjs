@@ -179,13 +179,76 @@ describe('task detail estimate and worklog', () => {
       });
     }
 
+    for (const warningDate of [true, false]) {
+      it(`rescues ${warningDate ? 'an untouched digit-shaped warning date' : 'a memo with Unicode separators and NUL'} on ${action}`, async ({ page }) => {
+        const date = warningDate ? '2026-13-01' : '2026-11-23';
+        const committed = [{ date, hours: 3, memo: 'committed memo' }];
+        await createDir(page, 'p', {
+          'kanban.md': board(task(1, 'Time tracking', `**Worklog**:\n- ${date} | 3h | committed memo`), { lastId: 1 }),
+          'archive.md': archive(''),
+        });
+        await openFolder(page, 'p');
+        await page.click('[data-task-id="TASK-001"] .task-title');
+        const original = await readFile(page, 'p', 'kanban.md');
+        const memo = 'before' + String.fromCharCode(0x2028) + 'middle'
+          + String.fromCharCode(0x2029, 0x0085) + 'after' + String.fromCharCode(0x0000) + 'end';
+        try {
+          await setFault(page, 'p', 'kanban.md', { readFail: true });
+          await page.evaluate(() => checkExternalChanges());
+          if (warningDate) await page.fill('#taskDetailEstimate', '8h');
+          else await page.fill('#taskDetailWorklog input[type="text"]', memo);
+          await page.waitForSelector(`#sync${action}Btn:visible`);
+          assert.equal(await syncState(page), 'error');
+          const draft = await page.evaluate(() => ({ estimate: detailDraft.estimate, worklog: detailDraft.worklog }));
+          let exported;
+          if (action === 'Download') {
+            const [download] = await Promise.all([
+              page.waitForEvent('download', { timeout: 5000 }),
+              page.click('#syncDownloadBtn'),
+            ]);
+            exported = await readDownloadedFile(await download.path(), 'utf8');
+          } else {
+            await page.evaluate(() => navigator.clipboard.writeText(''));
+            await page.click('#syncCopyBtn');
+            await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('**Worklog**:'));
+            exported = await page.evaluate(() => navigator.clipboard.readText());
+          }
+          const roundTrip = await page.evaluate(text => {
+            const parsed = parseKanbanContent(text);
+            const serialized = generateKanbanContent(parsed.config, parsed.tasks);
+            const again = parseKanbanContent(serialized);
+            return {
+              problems: parsed.problems, againProblems: again.problems,
+              serialized, stable: generateKanbanContent(again.config, again.tasks),
+              estimate: parsed.tasks[0].estimate, worklog: parsed.tasks[0].worklog,
+            };
+          }, exported);
+          assert.deepEqual(roundTrip.problems, []);
+          assert.deepEqual(roundTrip.againProblems, []);
+          assert.equal(roundTrip.serialized, exported);
+          assert.equal(roundTrip.stable, exported);
+          assert.deepEqual(roundTrip.worklog, warningDate ? committed : [{ date, hours: 3, memo: 'before middle  afterend' }]);
+          if (warningDate) assert.equal(roundTrip.estimate, '8h');
+          else assert.doesNotMatch(exported, /[\u0085\u2028\u2029\u0000]/);
+          assert.deepEqual(await page.evaluate(() => ({ estimate: detailDraft.estimate, worklog: detailDraft.worklog })), draft);
+          assert.deepEqual(await page.evaluate(() => tasks[0].worklog), committed);
+          assert.equal(await page.evaluate(() => isDetailDraftDirty()), true);
+          assert.equal(await page.evaluate(() => isDirty()), false);
+          assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+        } finally {
+          await setFault(page, 'p', 'kanban.md', {});
+          await waitIdle(page);
+        }
+      });
+    }
+
     for (const [label, type, invalid] of [
       ['empty hours', 'number', ''],
       ['negative hours', 'number', '-5'],
     ]) {
-      it(`omits draft ${label} while rescuing valid worklog on ${action}`, async ({ page }) => {
+      it(`restores committed ${label} while rescuing every worklog row and memo on ${action}`, async ({ page }) => {
         await setup(page);
-        // Two committed rows let us check both valid rescue and invalid omission.
+        // Keep the valid row and rescue the invalid row with its last committed hours.
         await page.evaluate(() => addWorklog('TASK-001'));
         await waitIdle(page);
         await change(page, '#taskDetailWorklog input[type="date"]', '2026-11-23');
@@ -203,6 +266,11 @@ describe('task detail estimate and worklog', () => {
           await setFault(page, 'p', 'kanban.md', { readFail: true });
           await page.evaluate(() => checkExternalChanges());
           await page.fill(selector, invalid);
+          await page.locator(`${row} input[type="text"]`).evaluate(el => {
+            el.value = 'draft memo worth rescuing';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+          assert.equal(await syncState(page), 'error');
           await page.waitForSelector(`#sync${action}Btn:visible`);
           const draft = await page.evaluate(() => detailDraft.worklog);
           let exported;
@@ -219,16 +287,23 @@ describe('task detail estimate and worklog', () => {
             exported = await page.evaluate(() => navigator.clipboard.readText());
           }
           assert.match(exported, /- 2026-11-23 \| 2h \| valid rescue row\n/);
-          assert.doesNotMatch(exported, /invalid rescue row|\| (?:0|-5|NaN)h/);
+          assert.match(exported, /\| 3h \| draft memo worth rescuing\n/);
+          assert.doesNotMatch(exported, /\| (?:0|-5|NaN)h/);
           const roundTrip = await page.evaluate(text => {
             const parsed = parseKanbanContent(text);
-            const again = parseKanbanContent(generateKanbanContent(parsed.config, parsed.tasks));
-            return { problems: parsed.problems, againProblems: again.problems, tasks: parsed.tasks, againTasks: again.tasks };
+            const serialized = generateKanbanContent(parsed.config, parsed.tasks);
+            const again = parseKanbanContent(serialized);
+            return {
+              problems: parsed.problems, againProblems: again.problems, tasks: parsed.tasks, againTasks: again.tasks,
+              serialized, stable: generateKanbanContent(again.config, again.tasks),
+            };
           }, exported);
           assert.deepEqual(roundTrip.problems, []);
           assert.deepEqual(roundTrip.againProblems, []);
           assert.deepEqual(roundTrip.againTasks, roundTrip.tasks);
-          assert.deepEqual(roundTrip.tasks[0].worklog, [{ date: '2026-11-23', hours: 2, memo: 'valid rescue row' }]);
+          assert.equal(roundTrip.serialized, exported);
+          assert.equal(roundTrip.stable, exported);
+          assert.deepEqual(roundTrip.tasks[0].worklog, [committed[0], { ...committed[1], memo: 'draft memo worth rescuing' }]);
           assert.equal(await page.inputValue(selector), invalid);
           assert.equal(await page.locator(selector).evaluate(el => el === document.activeElement), true);
           assert.deepEqual(await page.evaluate(() => detailDraft.worklog), draft);
