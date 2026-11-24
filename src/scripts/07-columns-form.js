@@ -295,16 +295,18 @@
                     // Export only restorable values without changing the in-progress draft.
                     const isDigitDate = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d));
                     const okHours = h => Number.isFinite(h) && h >= 0;
-                    const cleanMemo = m => String(m).replace(/[\r\n\u0085\u2028\u2029]/g, ' ').replace(/[\u0000]/g, '');
+                    const cleanMemo = m => String(m).replace(/[\r\n\u0085\u2028\u2029]/g, ' ').replace(/[\u0000]/g, '').trim();
                     const safeWorklog = detailDraft.worklog.map((log, i) => {
                         const committed = task.worklog[i] || { date: localDateString(), hours: 0, memo: '' };
-                        const date = isDigitDate(log.date) ? log.date : (isDigitDate(committed.date) ? committed.date : localDateString());
+                        const draftDate = String(log.date).trim();
+                        const date = isDigitDate(draftDate) ? draftDate : (isDigitDate(committed.date) ? committed.date : localDateString());
                         const hours = okHours(log.hours) ? log.hours : (okHours(committed.hours) ? committed.hours : 0);
                         const memo = cleanMemo(log.memo);
                         return { ...log, date, hours, memo };
                     });
-                    let safeEstimate = taskWriteProblems({ ...task, estimate: detailDraft.estimate, worklog: safeWorklog }, config.columns).length === 0
-                        ? detailDraft.estimate : (task.estimate || '');
+                    const draftEstimate = String(detailDraft.estimate ?? '').trim();
+                    let safeEstimate = taskWriteProblems({ ...task, estimate: draftEstimate, worklog: safeWorklog }, config.columns).length === 0
+                        ? draftEstimate : (task.estimate || '');
                     // The rescue export must round-trip, even if another field remains unrestorable.
                     let safeWorklogFinal = safeWorklog;
                     if (taskWriteProblems({ ...task, estimate: safeEstimate, worklog: safeWorklog }, config.columns).length) {

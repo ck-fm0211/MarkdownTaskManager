@@ -113,6 +113,7 @@ describe('task detail estimate and worklog', () => {
     for (const [committedEstimate, draftEstimate, memo, expectedEstimate] of [
       ['', '8h | 再見積もり', '', ''],
       ['4h', '8h | 再見積もり', '', '4h'],
+      ['4h', '8h ', '', '8h'],
       ['', '8h', 'Unsaved worklog memo', '8h'],
     ]) {
       it(`rescues estimate ${JSON.stringify(draftEstimate)} over ${JSON.stringify(committedEstimate)} on ${action}`, async ({ page }) => {
@@ -132,6 +133,7 @@ describe('task detail estimate and worklog', () => {
             el.dispatchEvent(new Event('input', { bubbles: true }));
           }, memo);
           await page.waitForSelector(`#sync${action}Btn:visible`);
+          assert.equal(await syncState(page), 'error');
           const draft = await page.evaluate(() => ({ estimate: detailDraft.estimate, worklog: detailDraft.worklog }));
           let exported;
           if (action === 'Download') {
@@ -162,6 +164,7 @@ describe('task detail estimate and worklog', () => {
           assert.equal(roundTrip.serialized, exported);
           assert.equal(roundTrip.stable, exported);
           assert.equal(roundTrip.estimate, expectedEstimate);
+          if (draftEstimate === '8h ') assert.match(exported, /\*\*Estimate\*\*: 8h\n/);
           if (memo) {
             assert.match(exported, /\*\*Estimate\*\*: 8h\n/);
             assert.ok(exported.includes(memo));
@@ -179,8 +182,9 @@ describe('task detail estimate and worklog', () => {
       });
     }
 
-    for (const warningDate of [true, false]) {
-      it(`rescues ${warningDate ? 'an untouched digit-shaped warning date' : 'a memo with Unicode separators and NUL'} on ${action}`, async ({ page }) => {
+    for (const scenario of ['warning date', 'Unicode separators and NUL', 'trailing memo space']) {
+      const warningDate = scenario === 'warning date';
+      it(`rescues ${scenario} on ${action}`, async ({ page }) => {
         const date = warningDate ? '2026-13-01' : '2026-11-23';
         const committed = [{ date, hours: 3, memo: 'committed memo' }];
         await createDir(page, 'p', {
@@ -190,7 +194,8 @@ describe('task detail estimate and worklog', () => {
         await openFolder(page, 'p');
         await page.click('[data-task-id="TASK-001"] .task-title');
         const original = await readFile(page, 'p', 'kanban.md');
-        const memo = 'before' + String.fromCharCode(0x2028) + 'middle'
+        const committedTask = await page.evaluate(() => tasks[0]);
+        const memo = scenario === 'trailing memo space' ? 'review ' : 'before' + String.fromCharCode(0x2028) + 'middle'
           + String.fromCharCode(0x2029, 0x0085) + 'after' + String.fromCharCode(0x0000) + 'end';
         try {
           await setFault(page, 'p', 'kanban.md', { readFail: true });
@@ -220,14 +225,17 @@ describe('task detail estimate and worklog', () => {
             return {
               problems: parsed.problems, againProblems: again.problems,
               serialized, stable: generateKanbanContent(again.config, again.tasks),
-              estimate: parsed.tasks[0].estimate, worklog: parsed.tasks[0].worklog,
+              task: parsed.tasks[0], estimate: parsed.tasks[0].estimate, worklog: parsed.tasks[0].worklog,
             };
           }, exported);
           assert.deepEqual(roundTrip.problems, []);
           assert.deepEqual(roundTrip.againProblems, []);
           assert.equal(roundTrip.serialized, exported);
           assert.equal(roundTrip.stable, exported);
-          assert.deepEqual(roundTrip.worklog, warningDate ? committed : [{ date, hours: 3, memo: 'before middle  afterend' }]);
+          const expectedWorklog = warningDate ? committed : [{ date, hours: 3, memo: scenario === 'trailing memo space' ? 'review' : 'before middle  afterend' }];
+          assert.deepEqual(roundTrip.worklog, expectedWorklog);
+          assert.deepEqual(roundTrip.task, { ...committedTask, estimate: warningDate ? '8h' : committedTask.estimate, worklog: expectedWorklog });
+          if (scenario === 'trailing memo space') assert.match(exported, /- 2026-11-23 \| 3h \| review\n/);
           if (warningDate) assert.equal(roundTrip.estimate, '8h');
           else assert.doesNotMatch(exported, /[\u0085\u2028\u2029\u0000]/);
           assert.deepEqual(await page.evaluate(() => ({ estimate: detailDraft.estimate, worklog: detailDraft.worklog })), draft);
