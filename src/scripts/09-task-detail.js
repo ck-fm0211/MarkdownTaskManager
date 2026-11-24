@@ -462,7 +462,9 @@
             const draft = draftForDetail(task);
             draft.worklog[idx][field] = worklogValue(field, value);
             // Validate only this field against committed values, never another pending input.
-            const committedVal = field === 'memo' ? String(value).trim() : worklogValue(field, value);
+            const committedVal = field === 'memo'
+                ? String(value).replace(/[\r\n\u0085\u2028\u2029]/g, ' ').trim()
+                : worklogValue(field, value);
             const worklog = task.worklog.map((log, i) => i === idx
                 ? { ...log, [field]: committedVal }
                 : { ...log });

@@ -104,6 +104,60 @@ describe('task detail estimate and worklog', () => {
     });
   }
 
+  for (const action of ['Copy', 'Download']) {
+    it(`normalizes a Unicode memo separator on clean commit to match unsaved ${action}`, async ({ page, dialogs }) => {
+      await setup(page);
+      await page.click('#taskDetailWorklog > button');
+      await waitIdle(page);
+      assert.equal(await syncState(page), 'saved');
+      const original = await readFile(page, 'p', 'kanban.md');
+      const seen = dialogs.seen.length;
+      const selector = '#taskDetailWorklog input[type="text"]';
+      const memo = ' a' + String.fromCharCode(0x2028) + 'b ';
+      await page.fill(selector, memo);
+      let exported;
+      // Invoke the rescue handlers without blurring or committing the focused input.
+      if (action === 'Download') {
+        const [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: 5000 }),
+          page.evaluate(() => downloadUnsaved()),
+        ]);
+        exported = await readDownloadedFile(await download.path(), 'utf8');
+      } else {
+        await page.evaluate(() => copyUnsaved());
+        exported = await page.evaluate(() => navigator.clipboard.readText());
+      }
+      assert.equal(await page.evaluate(() => tasks[0].worklog[0].memo), '');
+      assert.equal(await page.inputValue(selector), memo);
+      assert.equal(await readFile(page, 'p', 'kanban.md'), original);
+      const rescued = await page.evaluate(text => parseKanbanContent(text), exported);
+      assert.deepEqual(rescued.problems, []);
+      assert.equal(rescued.tasks[0].worklog[0].memo, 'a b');
+
+      await page.dispatchEvent(selector, 'change');
+      await waitIdle(page);
+      assert.deepEqual(dialogs.seen.slice(seen), [], 'normal commit must not alert');
+      assert.equal(await page.evaluate(() => tasks[0].worklog[0].memo), 'a b');
+      assert.equal(await page.inputValue(selector), 'a b');
+      assert.equal(await syncState(page), 'saved');
+      const saved = await readFile(page, 'p', 'kanban.md');
+      assert.equal(saved, exported, 'committed and rescued Markdown must match');
+      const roundTrip = await page.evaluate(text => {
+        const parsed = parseKanbanContent(text);
+        return { problems: parsed.problems, serialized: generateKanbanContent(parsed.config, parsed.tasks) };
+      }, saved);
+      assert.deepEqual(roundTrip.problems, []);
+      assert.equal(roundTrip.serialized, saved);
+
+      await page.evaluate(() => closeModal());
+      await openFolder(page, 'p');
+      await page.click('[data-task-id="TASK-001"] .task-title');
+      assert.equal(await page.inputValue(selector), 'a b');
+      assert.equal(await page.evaluate(() => tasks[0].worklog[0].memo), 'a b');
+      assert.deepEqual(dialogs.seen.slice(seen), []);
+    });
+  }
+
   it('still refuses an estimate that cannot round-trip after trimming on a clean board', async ({ page, dialogs }) => {
     await setup(page);
     await change(page, '#taskDetailEstimate', '4h');
@@ -961,7 +1015,7 @@ describe('task detail estimate and worklog', () => {
     await waitIdle(page);
     const original = await readFile(page, 'p', 'kanban.md');
     const originalWorklog = await page.evaluate(() => tasks[0].worklog);
-    for (const [field, value] of [['hours', '-1'], ['hours', 'NaN'], ['hours', ''], ['date', 'bad-date'], ['memo', 'before\nafter']]) {
+    for (const [field, value] of [['hours', '-1'], ['hours', 'NaN'], ['hours', ''], ['date', 'bad-date'], ['memo', 'before' + String.fromCharCode(0x0000) + 'after']]) {
       const alertCount = dialogs.seen.length;
       await page.evaluate(([field, value]) => updateWorklog('TASK-001', 0, field, value), [field, value]);
       await waitIdle(page);
